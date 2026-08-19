@@ -38,9 +38,12 @@ This is the highest-priority rule in this repo.
   `secrets.yaml` itself is **never** committed.
 - Also never commit: `.storage/`, `home-assistant_v2.db*`, `*.log`,
   `known_devices.yaml`, `ip_bans.yaml`, `tts/`, `.cloud/`, backups.
-- Before any commit, check the diff for tokens, MAC addresses, and
-  coordinates. If a secret was already committed, say so plainly — the
-  credential must be rotated, not just removed in a follow-up commit.
+- `.gitignore` covers the above, but treat it as a backstop, not a
+  guarantee: a file already tracked stays tracked even after a matching
+  ignore rule is added. Before any commit, check the diff for tokens, MAC
+  addresses, and coordinates. If a secret was already committed, say so
+  plainly — the credential must be rotated, not just removed in a
+  follow-up commit.
 
 ## Home Assistant YAML
 
