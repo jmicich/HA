@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import filecmp
 import fnmatch
+import os
 import shutil
 import sys
 from datetime import datetime
@@ -55,15 +56,24 @@ DENY = (
 HA_MARKERS = ("configuration.yaml", ".HA_VERSION")
 
 
-def is_denied(rel: Path) -> bool:
-    """True if any component or the whole relative path matches a deny rule."""
+def matches(rel: Path, patterns) -> bool:
+    """True if the whole relative path, or any component, matches a pattern.
+
+    Component matching is what makes a bare directory name like ".storage"
+    exclude everything beneath it regardless of depth.
+    """
     posix = rel.as_posix()
-    for pattern in DENY:
+    for pattern in patterns:
         if fnmatch.fnmatch(posix, pattern):
             return True
         if any(fnmatch.fnmatch(part, pattern) for part in rel.parts):
             return True
     return False
+
+
+def is_denied(rel: Path) -> bool:
+    """True if this path must never be deployed to a live instance."""
+    return matches(rel, DENY)
 
 
 def looks_like_ha_config(target: Path) -> bool:
@@ -161,4 +171,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BrokenPipeError:
+        # stdout was closed by a downstream reader, e.g. `| head`. Redirect
+        # the fd so the interpreter's own flush at exit cannot fail too.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        raise SystemExit(0)
