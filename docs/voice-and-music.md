@@ -38,7 +38,8 @@ Exposed to Assist, so the model sees it as a tool. Its description and field
 descriptions **are** the tool schema — editing them changes model behaviour.
 Treat them as code.
 
-Fields: `query` (required), `media_type` (optional), `player` (optional).
+Fields: `query` (required), `media_type` (optional), `player` (optional),
+`artist` (optional).
 
 ### Why media_type exists
 
@@ -138,6 +139,24 @@ added.
 entity, not the room. Moving a speaker without updating its aliases lets a
 request for one room target a device in another — worse than having no alias.
 
+**A field the schema doesn't have is information the script can never see,
+no matter how well the model understood the request.** `script.play_music`
+originally had no `artist` field. The model correctly parsed "play So What
+by Miles Davis" into `query: "So What"`, `media_type: "track"` — but had
+nowhere to put "Miles Davis", so it silently vanished before resolution ever
+ran. `pick_track` then ranked candidates by provider only, with no way to
+prefer the right performer, and played whichever "So What" happened to rank
+first. This looked at first like a model or ranking bug; it was a schema
+gap. **Fix:** added an optional `artist` field, and an artist-match
+preference step in `pick_track`/`pick_album` that runs *before* provider
+ranking — matching candidates are tried first, and a non-matching or absent
+artist falls back to the original provider-only behavior unchanged. Verified
+three ways: correct artist match, unset-artist backward compatibility, and
+graceful fallback on a non-matching artist all produce the expected pick.
+The model populated the new field correctly on the first attempt with no
+prompt changes, confirming the field description alone was the missing
+piece.
+
 ## Regression suite
 
 Run via `conversation.process` with `return_response: true`; verify with a
@@ -201,16 +220,7 @@ and single-run tests cannot distinguish "broken" from "unlucky".
 routed artist intent straight to a streaming artist URI, reintroducing the
 rate-limit hang. Artist intent must resolve via playlist/album.
 
-4. **Song-by-artist resolution ignores the artist entirely.** `pick_track`
-   ranks by provider (library → Spotify → Apple Music) but never checks the
-   candidate's artist against the one the model asked for — it takes
-   whichever track title matches first, regardless of who performs it.
-   Reproduced twice, identically: "play So What by Miles Davis" both times
-   played the same P!nk track (same Spotify URI both runs) instead of the
-   Miles Davis recording that was present in the same search results, ranked
-   lower only because of Apple Music's provider position. Deterministic, not
-   probabilistic — this is a resolution-ranking gap, not a flaky search.
-5. **The model sometimes hallucinates a `player` value that doesn't exist**,
+4. **The model sometimes hallucinates a `player` value that doesn't exist**,
    even when the user named no room or device at all. Confirmed via trace
    evidence: on one query, two consecutive attempts passed plausible-but-
    nonexistent entity-id-shaped strings, both correctly refused by the
