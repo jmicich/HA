@@ -7,9 +7,16 @@ Guidance for Claude Code when working in this repository.
 Personal Home Assistant repository: configuration, custom integrations,
 external automation code, and documentation for one HA installation.
 
-**The repo is currently empty apart from `README.md`.** Sections below
-describe the intended layout and conventions. As real code lands, update
-this file to match what actually exists — do not leave stale guidance here.
+**Only `docs/` is populated so far**; the config and code trees below are
+intended layout, not existing state. As real code lands, update this file to
+match what actually exists — do not leave stale guidance here.
+
+Start with `docs/project-overview.md` — it is the orientation doc for the
+voice-assistant build-out and points to the rest. Those docs follow a
+deliberate rule: **they record decisions, traps, and rationale, never
+auditable state** (no entity IDs, IPs, or inventories). Each carries a "How
+to audit this" section listing the calls that regenerate that information.
+Preserve that rule when editing them.
 
 ## Intended layout
 
