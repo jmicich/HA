@@ -258,9 +258,18 @@ and single-run tests cannot distinguish "broken" from "unlucky".
    recognize "Roomers" or "Take 5" as garbled references to something that
    actually played recently; it can only pass the garbled text through as a
    literal query, exactly as exposed to a title collision as a first-time
-   request. Completing the prompt block would not fix first-time-request
-   collisions like Yesterday, but would remove garbled-recall from this
-   defect's blast radius — **in progress, see `music-recall-memory.md`.**
+   request.
+
+   **Prompt block built and tested 2026-08-19 — partial fix, not complete.**
+   "Take 5" → "Take Five" now resolves correctly (verified via trace: the
+   model substitutes the canonical title). "Roomers" → "Rumours" still does
+   not, even on a clean list (also verified via trace). The pattern tracks
+   textual distance: the prompt block closes an easy substitution gap
+   (digit vs. spelled number) but not a phonetic-only one where the
+   transcribed text looks fairly different from the real title. Garbled
+   recall is no longer uniformly broken, but it isn't uniformly fixed
+   either — see `music-recall-memory.md` for the full verification and a
+   new self-reinforcement trap found while testing it.
 
    **New trap surfaced by the same suite run — a different mechanism, easy
    to conflate with defect #1 above:** "play soul in the attic" (Attic has no

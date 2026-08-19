@@ -1,7 +1,8 @@
 # Music recall memory — design
 
-Status as of 2026-08-18. **Built and working end to end for logging. Warm
-start and the prompt block remain.**
+Status as of 2026-08-19. **Built and working end to end for logging, and
+the prompt block is now live too — partially effective, see Verified below.
+Warm start remains.**
 
 Read alongside `voice-and-music.md` (three-layer split, the script, the
 traps).
@@ -94,7 +95,7 @@ deduped, placeholder rejected, capped:
 | `script.play_music` event fires | **All ten playback branches**, inserted between the result assignment and the stop |
 | End-to-end chain | **Verified** — a real playback call resolved, fired, logged, and appeared at the front of the list |
 | Warm start | Not built |
-| Prompt block | Not added |
+| Prompt block | **Built 2026-08-19** — see Verified behaviour below; effectiveness is condition-dependent, not a complete fix |
 
 The script edits used `python_transform` keyed on branch aliases, with an
 idempotency guard so a re-run does not double-insert. The `default:` branch
@@ -125,24 +126,58 @@ items only, and there is an upstream report of plays to some speakers not
 being recorded at all. If that is still broken, warm start degrades; the
 feature does not.
 
-### 2. Prompt block
+### 2. Prompt block — built 2026-08-19
 
-Wording is the tool schema — treat as code. It must frame the list as a
-*hint*:
+Added to the conversation agent's system prompt as its own section,
+substantially as originally specced:
 
 ```jinja
-Songs recently played in this house: {{ <the options list> | join(', ') }}
+Recently played in this house: {{ (state_attr('input_select.music_recall', 'options') | default([], true)) | join(', ') }}
 
 Household members, including children, often ask for music with imperfect
-titles or artist names. If a request closely resembles an item in this list,
-prefer that item. If it does not resemble anything in the list, ignore the
-list entirely and treat the request as new.
+titles or artist names. If a request closely resembles one of those recent
+titles, treat that exact title as the query instead of the words the user
+actually said. If the request does not closely resemble anything in that
+list, ignore the list entirely and treat it as new.
 ```
 
 This is **not** the trap `voice-and-music.md` warns about. That trap was
 hardcoding facts HA already knows and letting them go stale. This is a
 derived, live value — the same pattern as deriving rooms from visible media
 players.
+
+**Verified behaviour, condition-dependent — not a complete fix:**
+
+| Garbled reference | Real title | Result |
+| --- | --- | --- |
+| "Take 5" | "Take Five" | **Matched.** Trace confirmed `query: "Take Five"` — the model substituted the canonical title, not the words spoken. |
+| "Roomers" | "Rumours" | **Not matched**, on a clean list (retested after removing pre-existing pollution — see trap below). Trace confirmed `query: "Roomers"` passed verbatim. |
+
+The difference tracks textual distance, not intent clarity: "Take 5" and
+"Take Five" differ by one easy, common substitution (digit vs. spelled
+number). "Roomers" and "Rumours" are a plausible **phonetic** collision —
+this pairing was chosen specifically to simulate an STT mishearing — but
+the model works from already-transcribed text, where the two words look
+fairly different (`roomers` vs `rumours`). The prompt block helps close
+textual gaps; it doesn't reliably close phonetic-only gaps once the
+transcription has already flattened them to different-looking text. Whether
+that's worth chasing further depends on how often real garbling looks more
+like the STT case than the digit-substitution case — no evidence yet either
+way.
+
+**New trap, found while verifying this: a wrong resolution that gets logged
+becomes self-reinforcing.** Testing defect #3 before this prompt block
+existed produced two wrong resolutions ("Roomers" instead of Rumours, "Take
+5" instead of Take Five) that got logged into the recall list like any other
+play, since the logging automation has no way to know a play was a mistake.
+With the prompt block live, a future *identical* mangled request would then
+literally string-match the wrong logged title rather than the correct one —
+confirmed directly: the first post-fix retest of "Roomers" still failed
+because "Roomers" itself was sitting in the list as an exact match,
+out-competing "Rumours". Cleaned up by hand this time
+(`input_select.set_options`); nothing in the design currently prevents this
+from recurring on a real wrong resolution. Worth a mitigation if wrong
+resolutions turn out to be common enough to matter.
 
 ## Known design gap: no artist in the payload
 
