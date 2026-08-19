@@ -89,8 +89,51 @@ cd HA
 pip install -r requirements-dev.txt
 ```
 
+## Bootstrapping: seed the repo before the first deploy
+
+**Do this before running `sync_config.py` for the first time.** Until the
+repo holds a faithful copy of the live configuration, "the repo is the
+source of truth" is a claim, not a fact — and deploying a skeleton
+`configuration.yaml` over a working instance looks exactly like a correct
+deploy. The deploy guards do not catch a wrong-direction sync.
+
+`scripts/seed_config.py` runs the other way: it reads the live instance and
+writes into `config/`. It shares the deploy deny list, so secrets and
+runtime state cannot enter git by this route.
+
+Work in small, reviewable steps rather than one bulk import:
+
+```
+python scripts/seed_config.py --source H:/                      # preview everything
+python scripts/seed_config.py --source H:/ --only packages --apply
+git diff                                                        # read it
+git add config/ && git commit
+python scripts/seed_config.py --source H:/ --only automations.yaml --apply
+```
+
+**Review every diff before committing.** The deny list is a backstop, not a
+substitute for reading what you are about to publish — a hand-written
+comment or a hardcoded URL in an automation will pass every automated check
+and still not belong in git.
+
+What it refuses to import, on top of the deploy deny list: `deps/`,
+`.HA_VERSION`, `.uuid`, `backups/`, `image/`, `.cache/`, HACS-downloaded
+resources under `www/community/`, the HACS component itself, Z-Wave dumps,
+and any nested `.git/`.
+
+**It will not seed over uncommitted changes.** Untracked files in `config/`
+count as uncommitted, so a second scoped seed is blocked until the first is
+committed. That is deliberate — untracked work is the one thing git cannot
+recover. `--allow-dirty` overrides it.
+
+**Verifying the seed worked:** deploy straight back with no `--apply`. A
+faithful seed reports `0 new, 0 changed` — the repo and the instance agree.
+Anything else means something was missed or edited in between.
+
 ## The loop
 
+0. **Seed first, once**, if `config/` does not yet mirror the instance —
+   see above.
 1. **Edit in the repo**, never on the share. The share is a deploy target,
    not a workspace — edits made there are invisible to git and are silently
    overwritten by the next deploy.

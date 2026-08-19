@@ -247,6 +247,7 @@ are never edited directly on the share — edits there are invisible to git
 and are overwritten by the next deploy.
 
 ```
+python scripts/seed_config.py --source H:/         # bootstrap: live -> repo
 pytest tests/ -q                                   # tooling tests
 yamllint config/                                   # YAML lint
 python scripts/sync_config.py --target H:/         # preview (dry run)
@@ -261,6 +262,11 @@ verification is a state read, never the script's own output. It is dry-run
 by default, never deploys secrets or runtime state, never deletes from the
 target, and refuses a directory that does not look like an HA config tree. Its safety properties are covered by
 `tests/test_sync_config.py` — extend those tests when changing it.
+
+**Direction matters.** `seed_config.py` goes live → repo and must run before
+the first deploy; `sync_config.py` goes repo → live. A wrong-direction sync
+overwrites a working instance and looks identical to a correct one, so the
+repo must mirror the instance before it can act as its source of truth.
 
 Full procedure and traps: `docs/local-dev-setup.md`.
 
