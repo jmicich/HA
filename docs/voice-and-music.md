@@ -38,7 +38,8 @@ Exposed to Assist, so the model sees it as a tool. Its description and field
 descriptions **are** the tool schema — editing them changes model behaviour.
 Treat them as code.
 
-Fields: `query` (required), `media_type` (optional), `player` (optional).
+Fields: `query` (required), `media_type` (optional), `player` (optional),
+`artist` (optional).
 
 ### Why media_type exists
 
@@ -156,6 +157,24 @@ added.
 entity, not the room. Moving a speaker without updating its aliases lets a
 request for one room target a device in another — worse than having no alias.
 
+**A field the schema doesn't have is information the script can never see,
+no matter how well the model understood the request.** `script.play_music`
+originally had no `artist` field. The model correctly parsed "play So What
+by Miles Davis" into `query: "So What"`, `media_type: "track"` — but had
+nowhere to put "Miles Davis", so it silently vanished before resolution ever
+ran. `pick_track` then ranked candidates by provider only, with no way to
+prefer the right performer, and played whichever "So What" happened to rank
+first. This looked at first like a model or ranking bug; it was a schema
+gap. **Fix:** added an optional `artist` field, and an artist-match
+preference step in `pick_track`/`pick_album` that runs *before* provider
+ranking — matching candidates are tried first, and a non-matching or absent
+artist falls back to the original provider-only behavior unchanged. Verified
+three ways: correct artist match, unset-artist backward compatibility, and
+graceful fallback on a non-matching artist all produce the expected pick.
+The model populated the new field correctly on the first attempt with no
+prompt changes, confirming the field description alone was the missing
+piece.
+
 ## Regression suite
 
 Run via `conversation.process` with `return_response: true`; verify with a
@@ -218,6 +237,30 @@ and single-run tests cannot distinguish "broken" from "unlucky".
 **Earlier fix that caused a regression:** adding `media_type` initially
 routed artist intent straight to a streaming artist URI, reintroducing the
 rate-limit hang. Artist intent must resolve via playlist/album.
+
+4. **The model sometimes hallucinates a `player` value that doesn't exist**,
+   even when the user named no room or device at all. Confirmed via trace
+   evidence: on one query, two consecutive attempts passed plausible-but-
+   nonexistent entity-id-shaped strings, both correctly refused by the
+   "unknown speaker" guard; the model then copied a name verbatim out of
+   that guard's own `valid_speaker_names` error text on a third attempt and
+   succeeded — but landed on a different speaker than the documented default
+   ("omit to use the Living Room Speaker"), since it happened to match by
+   friendly name rather than by omission. The refuse-on-unknown-name guard
+   is doing its job here; the gap is upstream, in why the model invents a
+   target at all — **still open, not fixed by the mitigation below.**
+
+   **Cost mitigated, 2026-08-19:** the sequence order was: search, then
+   resolve+validate player, then fail loudly. Every hallucinated attempt was
+   therefore paying for a real `music_assistant.search` call before the
+   validation that was always going to reject it — eating into the
+   rate-limit budget on every wasted guess. Reordered to validate `player`
+   *before* calling search. Verified against a live, naturally-occurring
+   instance of this exact defect (not a synthetic test): two hallucinated
+   attempts each completed in ~2ms with the trace showing the search action
+   never reached, versus ~1.2s for the successful third attempt that
+   actually called it. Confirmed no regression: a valid `player` value and
+   an omitted one both still resolve exactly as before.
 
 ## Multi-room / synchronized playback
 
