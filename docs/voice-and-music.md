@@ -105,7 +105,25 @@ against undefined fail *silently* — producing an empty target and the error
 self-contained.
 
 **Friendly names vs entity IDs.** The model passes display names where the
-entity selector wants entity IDs. The script resolves both.
+entity selector wants entity IDs. The script resolves both — but not
+aliases; see below.
+
+**Script templates cannot read entity aliases at all.** Confirmed by direct
+template evaluation, not inferred: `entity_attr(entity_id, 'aliases')` does
+not exist as a template function in this HA version, and `aliases` is not a
+state attribute. So when the model passes a `player` value that matches an
+alias it correctly derived, friendly-name/entity-id matching alone can never
+resolve it — the previous trap's fix doesn't cover this case. **Area name is
+the real fix surface**, because `area_name()` *is* a native, registry-backed
+template function reachable from script logic. `script.play_music` falls
+back to matching `player` against the area name of any MA-owned speaker
+(case-insensitive substring) when direct entity-id/name matching fails. This
+still does not cover a free-form alias that isn't a room reference (a
+speaker nickname, say) — that class stays unreachable from templates by
+platform limitation, not a bug in this script. If a speaker's area
+assignment is missing or wrong, this fix surface silently does nothing —
+audit area assignment (see "How to audit this") before assuming the script
+is broken.
 
 **Rapid testing poisons its own results.** Back-to-back playback calls trip
 the provider limiter, after which every later test fails for unrelated
