@@ -228,11 +228,21 @@ rate-limit hang. Artist intent must resolve via playlist/album.
    that guard's own `valid_speaker_names` error text on a third attempt and
    succeeded — but landed on a different speaker than the documented default
    ("omit to use the Living Room Speaker"), since it happened to match by
-   friendly name rather than by omission. Each hallucinated attempt still
-   costs a real `music_assistant.search` call, so this eats into the
-   rate-limit budget even when it self-corrects. The refuse-on-unknown-name
-   guard is doing its job here; the gap is upstream, in why the model
-   invents a target at all.
+   friendly name rather than by omission. The refuse-on-unknown-name guard
+   is doing its job here; the gap is upstream, in why the model invents a
+   target at all — **still open, not fixed by the mitigation below.**
+
+   **Cost mitigated, 2026-08-19:** the sequence order was: search, then
+   resolve+validate player, then fail loudly. Every hallucinated attempt was
+   therefore paying for a real `music_assistant.search` call before the
+   validation that was always going to reject it — eating into the
+   rate-limit budget on every wasted guess. Reordered to validate `player`
+   *before* calling search. Verified against a live, naturally-occurring
+   instance of this exact defect (not a synthetic test): two hallucinated
+   attempts each completed in ~2ms with the trace showing the search action
+   never reached, versus ~1.2s for the successful third attempt that
+   actually called it. Confirmed no regression: a valid `player` value and
+   an omitted one both still resolve exactly as before.
 
 ## Multi-room / synchronized playback
 
