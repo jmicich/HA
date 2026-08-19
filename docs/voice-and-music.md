@@ -209,12 +209,63 @@ and single-run tests cannot distinguish "broken" from "unlucky".
 2. **Bare "pause" does nothing but claims success.** The model reports
    pausing while both players keep playing and no entity is touched. Naming
    a target works.
-3. **No relevance threshold.** Nonsense queries fuzzy-match to real content.
-   Search essentially always returns *something*, so the script's "no music
-   found" path is unreachable in practice. Proposed mitigation: have the
-   script return the resolved item's name so the model reports what actually
-   played instead of parroting the query. (The event payload now carries
-   this; the response path does not yet use it.)
+3. **No relevance threshold.** Search essentially always returns *something*,
+   so the script's "no music found" path is unreachable in practice. Nonsense
+   queries fuzzy-match to real content — that was the original evidence, but
+   the 3x regression run (2026-08-19) showed this is far more consequential
+   than "nonsense queries" scoped it to. **Four independent reproductions in
+   one suite, all ordinary, non-nonsense requests:**
+   - "play Yesterday" (no artist) played Lil Peep's "yesterday" (*crybaby*)
+     instead of The Beatles.
+   - A garbled recall reference to "Rumours" ("play the Roomers album")
+     matched a real, unrelated album literally titled *Roomers* instead of
+     recovering the intended one.
+   - A garbled recall reference to "Take Five" ("play that Take 5 song")
+     matched a real, unrelated track literally titled "Take 5" (Lil Skies)
+     instead of Dave Brubeck.
+
+   **Root cause: there is no popularity or relevance signal anywhere in the
+   ranking.** Every `found.tracks`/`found.albums`/`found.playlists` entry
+   seen across many traces carries the same field set — `uri`, `name`,
+   `version`, `artists`, `album`, `favorite`, `explicit` — never a play
+   count, popularity score, or chart signal. A title match against real
+   catalog content is scored identically whether it is the famous original
+   or an obscure same-named unrelated work, so "found something real" can
+   never be distinguished from "found the wrong real thing." This is a
+   platform data gap, not a ranking-logic bug — the ranking has nothing to
+   rank by. Proposed mitigation: have the script return the resolved item's
+   name so the model reports what actually played instead of parroting the
+   query. (The event payload now carries this; the response path does not
+   yet use it.) A real fix needs either a popularity signal from MA (not
+   currently exposed to this search) or leaning harder on the two mitigations
+   below, which sidestep the ranking problem rather than solving it.
+
+   **Two of the four reproductions above are actually a symptom of a
+   different, already-known gap: the recall list is not in the prompt.**
+   Per `music-recall-memory.md`, the "Prompt block" step was never built —
+   only the logging pipeline exists. Without it, the model has no way to
+   recognize "Roomers" or "Take 5" as garbled references to something that
+   actually played recently; it can only pass the garbled text through
+   as a literal query, where it's exactly as likely to collide with unrelated
+   real content as a first-time request is. The "Yesterday"/Lil Peep and
+   "Rumours"/"Roomers" failures are the same mechanism at different distances
+   from the root cause: one is the general no-relevance-signal problem, the
+   other is that problem *plus* a missing mitigation that was already
+   designed and specced. Completing the prompt block would not fix
+   first-time-request collisions, but would remove garbled-recall from this
+   defect's blast radius.
+
+   **New trap surfaced by the same suite run — a different mechanism, easy
+   to conflate with defect #1 above:** "play soul in the attic" (Attic has no
+   speaker) did not refuse and did not substitute after recognizing the room
+   — the model never recognized "attic" as a room reference at all. It
+   passed `query: "Soul in the Attic"` with no `player` field, because
+   "Soul In the Attic (Intro)" is itself a real single title, and the search
+   matched it. Defect #1 is recognition-then-wrong-choice; this is
+   recognition failing outright because an ambiguous room word coincides
+   with real content titling. Same downstream shape (wrong room gets
+   audio), different upstream cause — worth keeping distinct so a fix aimed
+   at one does not get credited with fixing the other.
 
 **Earlier fix that caused a regression:** adding `media_type` initially
 routed artist intent straight to a streaming artist URI, reintroducing the
