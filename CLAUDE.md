@@ -254,9 +254,12 @@ python scripts/sync_config.py --target H:/ --apply --backup .backups/
 hass --script check_config -c /config              # on the instance, before restart
 ```
 
-`sync_config.py` is dry-run by default, never deploys secrets or runtime
-state, never deletes from the target, and refuses a directory that does not
-look like an HA config tree. Its safety properties are covered by
+`sync_config.py` copies files over a Samba mount and holds no HA credential
+— it cannot reload, restart, or read state. **A deploy is inert until HA
+re-reads config**, which is ha-mcp's job or a restart from the UI, and
+verification is a state read, never the script's own output. It is dry-run
+by default, never deploys secrets or runtime state, never deletes from the
+target, and refuses a directory that does not look like an HA config tree. Its safety properties are covered by
 `tests/test_sync_config.py` — extend those tests when changing it.
 
 Full procedure and traps: `docs/local-dev-setup.md`.

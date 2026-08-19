@@ -31,6 +31,38 @@ repo and the Samba share. Use each tool for what it is good at:
 | Reading registries, evaluating templates, execution traces | ha-mcp via Claude Desktop |
 | Sending utterances closed-loop (`conversation.process`) | ha-mcp via Claude Desktop |
 
+## Two channels, deliberately separate
+
+Nothing here speaks a Home Assistant protocol of its own. Work reaches the
+instance over two independent channels, and keeping them separate is a
+design decision, not an accident of implementation:
+
+| Channel | Carries | Credential | Cannot |
+| --- | --- | --- | --- |
+| SMB / Samba | files onto `/config` | share username + password, held by the OS mount | reload, restart, or read state |
+| ha-mcp | registry reads, template evaluation, service calls, traces | the add-on's secret URL path | write files into `/config` |
+
+`sync_config.py` uses neither an HA API nor a token — it copies between two
+directory paths and is protocol-agnostic. Pointed at a local directory it
+behaves identically, which is how its tests run.
+
+**The deploy path holds no Home Assistant credential.** That is the
+strongest safety property of this setup: there is no long-lived access token
+to leak into the repo, a chat log, or CI, and if the mount is absent the
+script fails at "target is not a directory" rather than finding another
+route in. **Preserve it.** Adding a convenience `--reload` flag that calls
+HA's REST API would drag a token into the deploy path and give the script
+network reach it currently cannot have — do not add one without deciding
+that trade deliberately.
+
+**Consequence: a deploy is inert until something else activates it.** A file
+copy cannot make HA re-read config. The script stops after writing and says
+so. Activation is the other channel's job — `homeassistant.reload_all` or a
+targeted reload via ha-mcp, or a restart from the UI — and verification is
+too. The script reporting "wrote 1 file" is evidence about the filesystem
+and nothing more; whether HA parsed and applied it is a separate question
+only the API channel can answer.
+
 ## One-time setup
 
 **1. Expose `/config` over Samba.** Install the Samba share add-on in HA,
