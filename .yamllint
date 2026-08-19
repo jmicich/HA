@@ -1,0 +1,17 @@
+extends: default
+
+rules:
+  line-length:
+    max: 120
+    level: warning
+  # Home Assistant YAML uses `on:` as a mapping key in some schemas, and
+  # truthy checks fire on it unhelpfully.
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  document-start: disable
+  indentation:
+    spaces: 2
+    indent-sequences: consistent

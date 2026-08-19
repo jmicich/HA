@@ -1,0 +1,3 @@
+# Development and CI dependencies. Not installed on the HA instance.
+pytest>=8.0
+yamllint>=1.35

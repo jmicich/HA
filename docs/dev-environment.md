@@ -188,18 +188,31 @@ Everything stripped from this doc is one call away:
 - **Is the loop live** — `ha_eval_template("{{ now() }}")`
 - **Current `BestPracticeKey`** — `ha_get_skill_guide(...)`, re-read per write
 
-## Fallback options
+## Other access paths
 
-Ranked by effort:
+**Superseded, 2026-08-19.** The Samba path below was previously listed as a
+fallback. It is now the primary *write* path — ha-mcp reads and acts, Samba
+delivers files — and the two are used together rather than one substituting
+for the other. See `local-dev-setup.md`.
 
-1. **Screenshots into chat.** Slow, always works.
-2. **Claude Code against `/config` over Samba.** Better than MCP for YAML —
-   automations, `intent_script`, custom sentences, trigger-based templates —
-   since it edits files directly.
+1. **Claude Code against `/config` over Samba — primary write path.** Better
+   than MCP for YAML — automations, `intent_script`, custom sentences,
+   trigger-based templates — since it edits files directly. This is the only
+   channel that can put files in `/config` while the file-tools component is
+   not installed.
+2. **Screenshots into chat.** Slow, always works. A genuine fallback.
 3. **Cloud-brokered connector.** Works across web, desktop and mobile, but
    needs HA publicly reachable via Cloudflare Tunnel or Nabu Casa. Tailscale
    cannot serve this — it is private by design, and the broker has to reach
    the instance.
+
+**A Claude Code session running in the cloud cannot reach this instance at
+all.** Those sessions sit behind a policy-enforcing egress proxy: LAN ranges
+are unroutable from the container, and public HA endpoints are refused with
+403 by egress policy. Enabling HA remote access does not change this — the
+block is on the session side. Do not confuse this with the cloud-brokered
+connector above, which is a separate claude.ai feature and is unaffected.
+Verified 2026-08-19.
 
 ## Standing hygiene
 
