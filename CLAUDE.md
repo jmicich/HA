@@ -7,8 +7,8 @@ Guidance for Claude Code when working in this repository.
 Personal Home Assistant repository: configuration, custom integrations,
 external automation code, and documentation for one HA installation.
 
-**Only `docs/` is populated so far**; the config and code trees below are
-intended layout, not existing state. As real code lands, update this file to
+**Populated so far: `docs/`, `scripts/`, `tests/`, and CI.** The `config/`
+and integration trees below are intended layout, not existing state. As real code lands, update this file to
 match what actually exists — do not leave stale guidance here.
 
 Start with `docs/project-overview.md` — it is the orientation doc for the
@@ -17,6 +17,10 @@ deliberate rule: **they record decisions, traps, and rationale, never
 auditable state** (no entity IDs, IPs, or inventories). Each carries a "How
 to audit this" section listing the calls that regenerate that information.
 Preserve that rule when editing them.
+
+`docs/local-dev-setup.md` covers the working setup: Claude Code on the
+Windows host against HA's `/config` over Samba, and how config reaches the
+live instance.
 
 ## How we work together
 
@@ -192,11 +196,12 @@ This is the highest-priority rule in this repo.
   `has_value()` rather than raw attribute access that errors on `unknown`.
 - Validate before committing:
   ```
-  yamllint config/
-  hass --script check_config -c config/     # if HA is installed locally
+  yamllint config/                          # config in .yamllint, runs in CI
+  hass --script check_config -c config/     # on the HA instance
   ```
-  If neither tool is available in the environment, say so rather than
-  claiming the config was validated.
+  `check_config` needs a real HA install, so it runs on the instance rather
+  than in CI. If a check cannot be run in the current environment, say so
+  rather than claiming the config was validated.
 
 ## Custom components (Python)
 
@@ -234,6 +239,27 @@ This is the highest-priority rule in this repo.
 Markdown in `docs/`. Prefer documenting *why* a piece of automation exists
 and which physical device it depends on — that context is the part that
 can't be recovered from the YAML later.
+
+## Deploying to the live instance
+
+The repo is the source of truth; HA's `/config` is a deploy target. Files
+are never edited directly on the share — edits there are invisible to git
+and are overwritten by the next deploy.
+
+```
+pytest tests/ -q                                   # tooling tests
+yamllint config/                                   # YAML lint
+python scripts/sync_config.py --target H:/         # preview (dry run)
+python scripts/sync_config.py --target H:/ --apply --backup .backups/
+hass --script check_config -c /config              # on the instance, before restart
+```
+
+`sync_config.py` is dry-run by default, never deploys secrets or runtime
+state, never deletes from the target, and refuses a directory that does not
+look like an HA config tree. Its safety properties are covered by
+`tests/test_sync_config.py` — extend those tests when changing it.
+
+Full procedure and traps: `docs/local-dev-setup.md`.
 
 ## Working conventions
 
