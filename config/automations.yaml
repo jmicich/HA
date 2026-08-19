@@ -1,0 +1,22 @@
+- id: '1787077211852'
+  alias: Music recall — log resolved plays
+  description: Listens for the music_played event fired by script.play_music and maintains
+    a newest-first, deduped, 40-item list of resolved plays in input_select.music_recall.
+    That list is injected into the conversation agent prompt so garbled song requests
+    can be matched against what has actually played in this house. See music-recall-memory.md.
+  triggers:
+  - trigger: event
+    event_type: music_played
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.event.data.played | default('''') != '''' }}'
+  actions:
+  - action: input_select.set_options
+    target:
+      entity_id: input_select.music_recall
+    data:
+      options: '{{ ([trigger.event.data.played] + state_attr(''input_select.music_recall'',''options'')
+        | reject(''eq'', trigger.event.data.played) | reject(''eq'',''(none)'') |
+        list)[:40] }}'
+  mode: queued
+  max: 10
