@@ -86,6 +86,37 @@ resting on a false premise.
 - Distinguish *verified* from *inferred* when reporting. Both are useful;
   conflating them is not.
 
+**Run the tests for the subsystem you touched**, not just the ones that are
+cheap to run. Current mapping:
+
+| Touching | Run |
+| --- | --- |
+| `script.play_music`, the agent prompt, MA provider ranking or resolution order | the regression suite in `docs/voice-and-music.md` |
+| the music recall list, its automation, or the event payload | the same suite — its last two cases exist for recall |
+
+That regression table **is** the music playback integration suite; treat it
+as a test suite, not documentation. Extend this mapping as other subsystems
+gain suites.
+
+The music suite has constraints that make a careless run worse than no run:
+
+- **Each case at least three times.** Several failures are probabilistic; a
+  single green run proves nothing.
+- **Space playback calls ~30s apart.** Back-to-back calls trip the provider
+  rate limiter, after which every later case fails for unrelated reasons.
+- **Audit speaker inventory and room assignments first.** Three cases depend
+  on which rooms have speakers, and a room that is empty by accident rather
+  than by design makes the empty-room result meaningless.
+- **Any prompt change invalidates the whole suite**, not just the cases that
+  look prompt-related.
+- **Verify by reading player state, never the spoken reply.** The model
+  reports actions it did not take.
+
+These run against a live HA instance via `conversation.process`, so they are
+not automatable in CI today. Until they are, "run the tests" for music means
+running that suite by hand and reporting per-case results — including which
+cases were not run.
+
 ### Default workflow
 
 Unless told otherwise, every non-trivial task runs:
