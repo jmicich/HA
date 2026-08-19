@@ -1,0 +1,371 @@
+play_music:
+  alias: Play Music
+  description: Play music on a speaker. Use for any request to play, put on, or start
+    music, whether by artist, album, song, playlist, radio station, genre or mood.
+    Returns the name of what actually started playing, which may differ from what
+    was asked for.
+  icon: mdi:music
+  mode: restart
+  sequence:
+  - action: music_assistant.search
+    data:
+      config_entry_id: 01KZTNVHAVM54QQGJJ22W5DP43
+      name: '{{ query }}'
+      media_type:
+      - artist
+      - album
+      - playlist
+      - track
+      - radio
+    response_variable: found
+  - alias: Resolve target and rank matches by provider
+    variables:
+      p: '{{ player | default('''', true) | string }}'
+      matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
+        ''defined'') | list -%}
+
+        {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
+        | list) + (candidates | selectattr(''name'', ''eq'', p) | map(attribute=''entity_id'')
+        | list) -%}
+
+        {%- set ns = namespace(found=(direct | first | default('''', true))) -%}
+
+        {%- if ns.found == '''' and p != '''' -%}
+
+        {%- for c in candidates -%}
+
+        {%- set an = area_name(c.entity_id) -%}
+
+        {%- if ns.found == '''' and an and (an | lower) in (p | lower) -%}
+
+        {%- set ns.found = c.entity_id -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- endif -%}
+
+        {{ ns.found }}'
+      target_player: '{{ matched if matched != '''' else ''media_player.living_room''
+        }}'
+      uris_playlist: '{{ found.playlists | map(attribute=''uri'') | reject(''search'',
+        ''^bbc_sounds'') | list }}'
+      pick_playlist: '{{ ((uris_playlist | select(''search'', ''^library'') | list)
+        + (uris_playlist | select(''search'', ''^spotify'') | list) + (uris_playlist
+        | select(''search'', ''^apple_music'') | list) + uris_playlist) | first |
+        default('''', true) }}'
+      uris_album: '{{ found.albums | map(attribute=''uri'') | reject(''search'', ''^bbc_sounds'')
+        | list }}'
+      pick_album: '{{ ((uris_album | select(''search'', ''^library'') | list) + (uris_album
+        | select(''search'', ''^spotify'') | list) + (uris_album | select(''search'',
+        ''^apple_music'') | list) + uris_album) | first | default('''', true) }}'
+      uris_track: '{{ found.tracks | map(attribute=''uri'') | reject(''search'', ''^bbc_sounds'')
+        | list }}'
+      pick_track: '{{ ((uris_track | select(''search'', ''^library'') | list) + (uris_track
+        | select(''search'', ''^spotify'') | list) + (uris_track | select(''search'',
+        ''^apple_music'') | list) + uris_track) | first | default('''', true) }}'
+      uris_artist: '{{ found.artists | map(attribute=''uri'') | reject(''search'',
+        ''^bbc_sounds'') | list }}'
+      pick_artist: '{{ ((uris_artist | select(''search'', ''^library'') | list) +
+        (uris_artist | select(''search'', ''^spotify'') | list) + (uris_artist | select(''search'',
+        ''^apple_music'') | list) + uris_artist) | first | default('''', true) }}'
+  - alias: Fail loudly if a named speaker did not resolve
+    if:
+    - condition: template
+      value_template: '{{ p != '''' and matched == '''' }}'
+    then:
+    - variables:
+        err:
+          error: No speaker is named '{{ p }}'. Nothing was played. Retry using one
+            of the exact speaker names listed.
+          valid_speaker_names: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') | map(attribute=''name'') | list }}'
+          valid_rooms: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') | map(attribute=''entity_id'') | map(''area_name'') | select(''string'')
+            | unique | list }}'
+    - stop: Unknown speaker
+      response_variable: err
+  - alias: Play best available match
+    choose:
+    - alias: Requested track
+      conditions:
+      - condition: template
+        value_template: '{{ media_type | default('''', true) == ''track'' and pick_track
+          != '''' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_track }}'
+          media_type: track
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.tracks | selectattr(''uri'', ''eq'', pick_track) |
+              map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: track
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: Requested album
+      conditions:
+      - condition: template
+        value_template: '{{ media_type | default('''', true) == ''album'' and pick_album
+          != '''' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_album }}'
+          media_type: album
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.albums | selectattr(''uri'', ''eq'', pick_album) |
+              map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: album
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: Requested playlist or radio
+      conditions:
+      - condition: template
+        value_template: '{{ media_type | default('''', true) in [''playlist'', ''radio'']
+          and pick_playlist != '''' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_playlist }}'
+          media_type: playlist
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.playlists | selectattr(''uri'', ''eq'', pick_playlist)
+              | map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: playlist
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: Artist intent via local album
+      conditions:
+      - condition: template
+        value_template: '{{ media_type | default('''', true) == ''artist'' and pick_album.startswith(''library'')
+          }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_album }}'
+          media_type: album
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.albums | selectattr(''uri'', ''eq'', pick_album) |
+              map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: album
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: Artist intent via playlist
+      conditions:
+      - condition: template
+        value_template: '{{ media_type | default('''', true) == ''artist'' and pick_playlist
+          != '''' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_playlist }}'
+          media_type: playlist
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.playlists | selectattr(''uri'', ''eq'', pick_playlist)
+              | map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: playlist
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: Artist intent via album
+      conditions:
+      - condition: template
+        value_template: '{{ media_type | default('''', true) == ''artist'' and pick_album
+          != '''' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_album }}'
+          media_type: album
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.albums | selectattr(''uri'', ''eq'', pick_album) |
+              map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: album
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: Playlist
+      conditions:
+      - condition: template
+        value_template: '{{ pick_playlist != '''' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_playlist }}'
+          media_type: playlist
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.playlists | selectattr(''uri'', ''eq'', pick_playlist)
+              | map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: playlist
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: Album
+      conditions:
+      - condition: template
+        value_template: '{{ pick_album != '''' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_album }}'
+          media_type: album
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.albums | selectattr(''uri'', ''eq'', pick_album) |
+              map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: album
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: Track
+      conditions:
+      - condition: template
+        value_template: '{{ pick_track != '''' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_track }}'
+          media_type: track
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.tracks | selectattr(''uri'', ''eq'', pick_track) |
+              map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: track
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: Artist, last resort only
+      conditions:
+      - condition: template
+        value_template: '{{ pick_artist != '''' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ pick_artist }}'
+          media_type: artist
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ (found.artists | selectattr(''uri'', ''eq'', pick_artist)
+              | map(attribute=''name'') | list | first) | default(''unknown'', true)
+              }}'
+            kind: artist
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+      - stop: Playback started
+        response_variable: result
+    default:
+    - stop: No music found matching that.
+  fields:
+    query:
+      name: Query
+      description: 'What to play: an artist, album, song, playlist, or radio station.
+        If the user did not say what to play, pass a genre or mood such as chill or
+        rock.'
+      required: true
+      selector:
+        text:
+    player:
+      name: Player
+      description: Which speaker to play on. Omit to use the Living Room Speaker.
+      required: false
+      selector:
+        entity:
+          domain: media_player
+          integration: music_assistant
+    media_type:
+      name: Media Type
+      description: 'What kind of thing was asked for. Use ''track'' for a named song,
+        ''album'' for a named album, ''artist'' for a band or performer, ''playlist''
+        for a named playlist, ''radio'' only for an actual radio station such as BBC
+        Radio 6. A genre or mood such as EDM, rock or chill is NOT radio: leave this
+        field unset for those.'
+      required: false
+      selector:
+        select:
+          options:
+          - track
+          - album
+          - artist
+          - playlist
+          - radio
