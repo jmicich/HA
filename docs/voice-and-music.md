@@ -201,6 +201,29 @@ and single-run tests cannot distinguish "broken" from "unlucky".
 routed artist intent straight to a streaming artist URI, reintroducing the
 rate-limit hang. Artist intent must resolve via playlist/album.
 
+4. **Song-by-artist resolution ignores the artist entirely.** `pick_track`
+   ranks by provider (library → Spotify → Apple Music) but never checks the
+   candidate's artist against the one the model asked for — it takes
+   whichever track title matches first, regardless of who performs it.
+   Reproduced twice, identically: "play So What by Miles Davis" both times
+   played the same P!nk track (same Spotify URI both runs) instead of the
+   Miles Davis recording that was present in the same search results, ranked
+   lower only because of Apple Music's provider position. Deterministic, not
+   probabilistic — this is a resolution-ranking gap, not a flaky search.
+5. **The model sometimes hallucinates a `player` value that doesn't exist**,
+   even when the user named no room or device at all. Confirmed via trace
+   evidence: on one query, two consecutive attempts passed plausible-but-
+   nonexistent entity-id-shaped strings, both correctly refused by the
+   "unknown speaker" guard; the model then copied a name verbatim out of
+   that guard's own `valid_speaker_names` error text on a third attempt and
+   succeeded — but landed on a different speaker than the documented default
+   ("omit to use the Living Room Speaker"), since it happened to match by
+   friendly name rather than by omission. Each hallucinated attempt still
+   costs a real `music_assistant.search` call, so this eats into the
+   rate-limit budget even when it self-corrects. The refuse-on-unknown-name
+   guard is doing its job here; the gap is upstream, in why the model
+   invents a target at all.
+
 ## Multi-room / synchronized playback
 
 Works cross-brand with no setup. Joining with one speaker as leader pulls
