@@ -1,9 +1,9 @@
 # Voice & Music — design decisions
 
-Status as of 2026-08-19. Covers the Assist voice stack, `script.search_music`
-+ `script.play_music` + `script.clarify_music_choice`, and Music Assistant
-playback. Read this before changing the pipelines, the conversation agent's
-prompt, or any of the three scripts.
+Status as of 2026-08-20. Covers the Assist voice stack, `script.search_music`
++ `script.play_music` + `script.clarify_music_choice` + `script.set_music_repeat`,
+and Music Assistant playback. Read this before changing the pipelines, the
+conversation agent's prompt, or any of the four scripts.
 
 **This doc deliberately records no auditable state.** No entity IDs, speaker
 inventory, room assignments, RINCON identifiers, config hashes, or which
@@ -72,6 +72,14 @@ code), then calls `assist_satellite.ask_question` on the house's one voice
 satellite with the two options offered as spoken answer choices, and plays
 whichever the user picked. No answer, or an unmatched answer, returns an
 error response — it never guesses.
+
+**`set_music_repeat`** — added 2026-08-20 for "play/put this on repeat" and
+"stop repeating" requests. Fields: `mode` (required — `one` or `off`),
+`player` (optional). Same player-resolution and fail-loud code as the
+others. Calls the native `media_player.repeat_set` service directly — no
+search, no play, doesn't require anything to already be playing. See
+"Repeat" below for the three entry points this covers and how each is
+routed.
 
 ### Why two scripts
 
@@ -222,6 +230,72 @@ Fallback (when `media_type` is unset, i.e. a genre or mood):
 Within each type, when `artist` is given, candidates naming that artist are
 offered first; provider order (library → Spotify → Apple Music) breaks ties
 either way.
+
+## Repeat
+
+Added 2026-08-20, covering three entry points: naming content and asking
+for it on repeat, putting whatever's already playing on repeat, and turning
+repeat back off. All three verified working end to end via the real voice
+pipeline, not just direct script calls.
+
+**The capability already existed natively — this was a wiring gap, not a
+missing feature.** `media_player.repeat_set` (modes `off`/`all`/`one`) is a
+core HA service, and the house's MA-owned speakers confirmed support for it
+(checked the `supported_features` bitmask directly — bit `262144`,
+`REPEAT_SET`, is present). Before this, nothing routed a repeat request
+anywhere: tested empirically, "put this song on repeat" hit no tool at all
+and the model asked "which song?", because nothing told it repeat was a
+concept it could act on, or that "this" means whatever's already playing.
+
+**Routing, three ways:**
+- **"Play X on repeat"** — content is named, so this stays inside the
+  existing `search_music` → `play_music` flow. `play_music` gained an
+  optional `repeat` boolean field; when true, it calls
+  `media_player.repeat_set(mode='one')` on the target player right after
+  `music_assistant.play_media` succeeds, before returning. No extra tool
+  call, no extra LLM round-trip.
+- **"Put this on repeat" / "stop repeating"** — no new content named, same
+  shape as the native pause/resume commands, except HA has no built-in
+  intent for repeat. Routes to the new `set_music_repeat` script, which
+  only sets the mode — it never searches or plays, and doesn't require
+  anything to already be playing.
+- All three verified via player state (`repeat` attribute), not the spoken
+  reply: "play X on repeat" starts the right item with `repeat: "one"` in
+  one call; "put this on repeat" flips an already-playing item's mode
+  without interrupting playback (position kept advancing through the
+  change); "turn off repeat" clears it the same way.
+
+**Decision, explicit:** "put this on repeat" sets the mode unconditionally,
+even if nothing is currently playing on the target player — it doesn't
+check player state first or refuse when idle. Chosen deliberately: harmless
+either way, and matches how someone might reasonably say it just before
+pressing play.
+
+**`set_music_repeat`'s tool description needed a specific, non-obvious
+correction before the model would call it at all.** The first version said
+what the script does but not what it *doesn't need* — the model twice
+declined to call it and asked "which song is playing?" for a tool that has
+no song field and doesn't care. Fixed by stating the negative explicitly:
+"You do NOT need to know the song's name... there is no field for it...
+Never ask the user what song is playing before calling this." Necessary
+because the model was reasoning as if all music-related actions require
+identifying the content, generalizing from `search_music`/`play_music`'s
+actual requirement to a tool that has no such requirement. A lesson beyond
+this one script: when a new music tool doesn't need something every other
+music tool needs, say so, don't assume the absence of a field is enough
+signal on its own.
+
+**Defect #4 (player hallucination, still open — see Open Defects)
+reproduced immediately in the new tool, unprompted, during this feature's
+own verification.** A bare "put this song on repeat" (no room named) had
+the model guess `player: "Sonos"` (invalid, correctly fail-loud rejected),
+then retry with `player: "Sonos 2"` — copied verbatim from the guard's own
+error text — landing on a real but wrong speaker instead of omitting the
+field for the documented Living Room default. Not a bug introduced by this
+feature; the exact same shape already documented for `play_music`. Left as
+further evidence for defect #4's open root cause, not something fixed
+here — retesting with the room named explicitly worked correctly and is
+the verified path.
 
 ## Traps, with evidence
 
@@ -531,6 +605,13 @@ rate-limit hang. Artist intent must resolve via playlist/album.
    defect's shape or its mitigation; the fail-loud guard lives entirely in
    `play_music`, unchanged.
 
+   **Reproduced a third time, same shape, in `set_music_repeat`'s own
+   verification (2026-08-20)** — see "Repeat" above. Confirms this is a
+   property of the model's general player-resolution behavior, not
+   something specific to `play_music`; any new script reusing the same
+   resolve-player code should expect the same failure mode and the same
+   fail-loud mitigation, not a fresh one.
+
 5. **A room with more than one speaker makes "resume" with a room-only
    target ambiguous, and it fails rather than guessing.** Observed 0/2 in
    the 2026-08-19 suite run. This is native HA pause/resume intent handling,
@@ -607,8 +688,8 @@ Regenerate everything this doc no longer states:
   state machine
 - **Which agent and wake word each pipeline uses** — `ha_manage_pipeline`
 - **Current script bodies and `config_hash`** — `ha_config_get_script` for
-  `search_music`, `play_music`, and `clarify_music_choice`, read
-  immediately before any write
+  `search_music`, `play_music`, `clarify_music_choice`, and
+  `set_music_repeat`, read immediately before any write
 - **Which model the conversation agent is currently using** — the
   OpenRouter conversation subentry's `model` field
   (`ha_get_integration(entry_id=..., include_subentries=true)` then
