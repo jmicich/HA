@@ -488,10 +488,22 @@ model or prompt changes, separately from correctness.
 | Pause, no target | |
 | Pause, with target | |
 | Resume, with target | |
+| Repeat, new content | "play [song] on repeat" — must both play the right song AND set `repeat: "one"` in the same request |
+| Repeat, current, no target | "put this song on repeat" / "repeat this" — no room named; this is the exact phrasing that triggered defect #4 during this feature's own verification, see "Repeat" above |
+| Repeat, remove | "stop repeating" / "turn off repeat" |
 | Mangled recall | garbled version of a previously played item → maps to it |
 | Novel request | absent from the recall list → treated as new, **must not** bend |
 
 The last two exist because of the recall list; see `music-recall-memory.md`.
+
+**Repeat cases verify via the player's `repeat` attribute, not the spoken
+reply** — same rule as everywhere else in this doc, and specifically
+important here since the reply already misreported the target device once
+during this feature's initial verification (see "Repeat" above). "Repeat,
+current, no target" is deliberately the bare, no-room phrasing precisely
+because that's what surfaced defect #4 in this tool; a phrasing that
+already names a room will not exercise that path and isn't a substitute
+for this case.
 
 **Before running:** audit the speaker inventory and room assignments first.
 Three cases depend on which rooms have speakers, and an empty room that is
