@@ -423,6 +423,39 @@ earn; this is the model claiming failure it didn't have. Same rule, verify
 state either way, but worth naming explicitly since a false failure report
 could send someone chasing a bug that isn't there.
 
+**Root cause found and partially fixed, 2026-08-20 — the scripts never told
+the model which speaker they actually used.** The repeat feature's own
+testing surfaced the sharpest instance yet: "put this song on repeat in the
+living room" got the reply *"Repeat is on. Yesterday will loop"* while
+`media_player.repeat_set` had actually landed on a different speaker
+entirely, playing a different leftover song. Checked, not assumed:
+`play_music`, `set_music_repeat`, and `clarify_music_choice`'s `result`
+payloads carried `played`/`kind`/`repeat` but never which player was
+targeted — so even a model trying to report accurately had no real data to
+ground a room claim on, and could only ever be echoing what the *user*
+asked for, not what the tool *did*. A prompt instruction alone cannot fix
+that; there was nothing true for it to say.
+
+**Fix: added `player` (resolved friendly name) to all three scripts'
+`result`, plus a prompt instruction to ground every reported fact — song,
+repeat state, and room — strictly in the tool's returned fields, explicitly
+never in what the user asked for or what was called with.** Verified across
+3 live reps of the exact repro shape (bare "put this song on repeat," no
+room named — the phrasing already known to trigger defect #4's
+player-resolution flakiness): 2/3 resolved correctly and the reply now
+explicitly names the actual player from the response ("Repeat is on for
+the Living Room Speaker" — it previously never named a room at all in the
+success case, and named the wrong one in the failure case above). The
+third rep asked which speaker rather than guessing — a safe abstention, not
+a regression, but also not a reproduction of the original bug shape. **Not
+fully closed:** three reps didn't happen to catch defect #4 actually
+landing on a wrong player this round, so the fix is verified for the
+"tool succeeded, is the reply honest about it" case, but not yet
+re-confirmed for the original "tool landed on the wrong player, does the
+reply admit it" case specifically — worth catching that combination
+specifically next time it's tested, rather than assuming the fix covers it
+by extension.
+
 **Having the right answer in context does not mean the model uses it.** The
 "Roomers" → "Rumours" mangled-recall case fails even when the correct title
 is present *twice over* — once as a `search_music` candidate correctly
