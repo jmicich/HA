@@ -456,6 +456,29 @@ reply admit it" case specifically — worth catching that combination
 specifically next time it's tested, rather than assuming the fix covers it
 by extension.
 
+**A structural fix was investigated and ruled out, confirmed empirically,
+not assumed.** `set_conversation_response` — the native HA action that lets
+a script dictate the exact spoken reply — has no effect on this pipeline.
+Tested directly: added it to `set_music_repeat` with a distinctive marker
+string, called the script through the real voice pipeline, and the actual
+spoken reply was the LLM's own paraphrase ("Repeat is now off in the living
+room"), not the marker text. This makes sense once traced through: our
+music tools are called by an LLM *function-calling* agent
+(`llm_hass_api: assist`), which always synthesizes its own final reply from
+tool-result data as one more step after the tool call returns — it never
+adopts a tool's response as the final utterance verbatim. `set_conversation_response`
+only takes effect for HA's native/local intent-triggered conversation
+flow, where the script *is* the entire response mechanism and there's no
+LLM paraphrasing step to override. **No known mechanism in this stack lets
+a script force its own wording into the spoken reply when called as an LLM
+tool.** The prompt-level grounding fix above (return the real data, instruct
+the model to use only that data) is therefore the ceiling of what's
+achievable here, not a stopgap on the way to something stronger — reflect
+that before promising a fully deterministic reply is possible without
+changing the architecture (e.g. dropping to a local hassil-matched intent
+for these specific commands, which is a materially bigger change and has
+its own documented risk — see "Deliberately not done").
+
 **Having the right answer in context does not mean the model uses it.** The
 "Roomers" → "Rumours" mangled-recall case fails even when the correct title
 is present *twice over* — once as a `search_music` candidate correctly
