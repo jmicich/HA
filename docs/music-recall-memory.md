@@ -1,7 +1,9 @@
 # Music recall memory — design
 
-Status as of 2026-08-18. **Built and working end to end for logging. Warm
-start and the prompt block remain.**
+Status as of 2026-08-19. **Built end to end: logging and the prompt block
+are both live. Warm start remains. The prompt block only partially works —
+see "Verified behaviour of the prompt block" below before assuming it
+covers what the name suggests.**
 
 Read alongside `voice-and-music.md` (three-layer split, the script, the
 traps).
@@ -12,8 +14,9 @@ contents. See "How to audit this".
 ## Problem
 
 Requests arrive garbled — partial titles, mangled artist names, kid-speak.
-The search layer resolves them to *something* regardless (defect #3, still
-open), so the failure is silent rather than loud.
+The search layer resolves them to *something* regardless (defect #3 in
+`voice-and-music.md`; 3a is fixed, 3b and 3c remain open — see there), so
+the failure is silent rather than loud.
 
 A list of what has actually played in this house is a strong prior for
 interpreting a mangled request. Fuzzy matching then happens inside the
@@ -23,8 +26,8 @@ model, which is what it is good at.
 
 ## Decision
 
-1. `script.play_music` fires a `music_played` event on each successful
-   branch, carrying the `result` it already builds.
+1. `script.play_music` fires a `music_played` event on its playback path,
+   carrying the `result` it already builds.
 2. An automation listens for it and writes a prepend-capped, deduped list
    into an `input_select` via `input_select.set_options`.
 3. The conversation agent prompt injects that list on every turn via
@@ -91,19 +94,19 @@ deduped, placeholder rejected, capped:
 | --- | --- |
 | The `input_select` helper | **Created** |
 | Logging automation | **Created**, `mode: queued`, fires on the event, guards against empty payloads |
-| `script.play_music` event fires | **All ten playback branches**, inserted between the result assignment and the stop |
+| `script.play_music` event fires | **Yes**, inserted between the result assignment and the stop. Was "all ten playback branches" before the 2026-08-19 search/play split collapsed them to one. |
 | End-to-end chain | **Verified** — a real playback call resolved, fired, logged, and appeared at the front of the list |
 | Warm start | Not built |
-| Prompt block | Not added |
+| Prompt block | **Built** — see below for what it does and doesn't fix |
 
 The script edits used `python_transform` keyed on branch aliases, with an
 idempotency guard so a re-run does not double-insert. The `default:` branch
 sets no result and was correctly left untouched.
 
-**Coverage caveat:** the end-to-end test exercised one of the ten branches.
-The transform applied uniformly and the guard makes it safe to re-run, but
-nine branches are inferred-good, not verified-good. The regression suite
-would exercise the rest.
+**Coverage caveat, historical:** at the time this was written, `play_music`
+had ten playback branches and only one had been end-to-end verified. Moot
+since the 2026-08-19 search/play split collapsed all ten into a single
+playback path, which the regression suite has since exercised repeatedly.
 
 **Cleanup outstanding:** a throwaway test helper was created during
 verification and its deletion was issued during a client-side hang. Confirm
@@ -125,18 +128,20 @@ items only, and there is an upstream report of plays to some speakers not
 being recorded at all. If that is still broken, warm start degrades; the
 feature does not.
 
-### 2. Prompt block
+## Prompt block — built, wording as deployed
 
-Wording is the tool schema — treat as code. It must frame the list as a
-*hint*:
+Wording is the tool schema — treat as code. Frames the list as a *hint*,
+injected into the conversation agent's prompt on every turn:
 
 ```jinja
-Songs recently played in this house: {{ <the options list> | join(', ') }}
-
-Household members, including children, often ask for music with imperfect
-titles or artist names. If a request closely resembles an item in this list,
-prefer that item. If it does not resemble anything in the list, ignore the
-list entirely and treat the request as new.
+Music, matching a mangled or partial request to something recently played:
+- Recently played in this house: {{ (state_attr('input_select.music_recall', 'options') | default([], true)) | join(', ') }}
+- Household members, including children, often ask for music with imperfect
+  titles or artist names. If a request closely resembles one of those recent
+  titles, treat that exact title as the query instead of the words the user
+  actually said.
+- If the request does not closely resemble anything in that list, ignore the
+  list entirely and treat it as new.
 ```
 
 This is **not** the trap `voice-and-music.md` warns about. That trap was
@@ -144,15 +149,51 @@ hardcoding facts HA already knows and letting them go stale. This is a
 derived, live value — the same pattern as deriving rooms from visible media
 players.
 
-## Known design gap: no artist in the payload
+### Verified behaviour of the prompt block
 
-`result` carries the resolved item's **name only** — a bare title, no
-artist. So the recall list cannot help with a mangled *artist* name, which
-was half the original use case.
+Tested both before and after the `search_music`/`play_music` redesign
+(`voice-and-music.md`) — the split didn't change the outcome, which is the
+important result here.
 
-The fix is enriching the event payload with artist at the point of
-resolution. Worth deciding **before** the list accumulates a few hundred
-entries in the wrong shape, since old entries will not be backfilled.
+| Case | Result |
+| --- | --- |
+| "Take 5" → "Take Five" | **Fixed.** Textually close — one common digit/spelled-number substitution. Model reliably substitutes the canonical title, verified via trace. |
+| "Roomers" → "Rumours" | **Still fails, deterministically (0/3, 2026-08-19).** Phonetically close but textually different once transcribed. Fails the same way every time, not intermittently — see the trap in `voice-and-music.md` ("Having the right answer in context does not mean the model uses it"). The correct title was present in the recall list *and* independently in `search_music`'s own candidates on every attempt; the model still picked the literal-text match ("Roomers", a real playlist). |
+
+**The pattern is textual distance, and it did not move when the pipeline
+changed underneath it.** The block closes an easy substitution gap but not
+a phonetic-only one — and giving the model a second, independent path to
+the same correct answer (real search candidates, correctly artist-tagged)
+didn't close it either. This looks less like "not enough signal" and more
+like literal text similarity dominating regardless of how much correct
+signal sits alongside it. No fix identified; flagged as open in
+`voice-and-music.md` defect 3b.
+
+### Self-reinforcement trap
+
+A wrong resolution that gets logged into the recall list becomes a future
+exact-match target for the same wrong request — confirmed directly: an
+earlier failed "Roomers" test logged "Roomers" itself into the recall list,
+which then out-competed the correct "Rumours" entry on the next attempt
+purely because it was an exact string match. **A wrong resolution is not
+self-correcting; it's self-reinforcing.** The list needs occasional manual
+cleaning of known-wrong entries — there is no automatic mechanism to detect
+or evict one. Nothing currently prevents this recurring on a genuinely new
+wrong resolution, not just the "Roomers" one already seen twice.
+
+## Known design gap: no artist in the payload — closed 2026-08-19
+
+`result` used to carry the resolved item's **name only** — a bare title, no
+artist — so the recall list couldn't help with a mangled *artist* name,
+which was half the original use case.
+
+**Closed as a side effect of the `search_music`/`play_music` redesign**
+(`voice-and-music.md`): `play_music` now has an `artist` field, populated
+from the chosen `search_music` candidate, and the `music_played` event
+carries it alongside `played`/`kind`. Not yet used to enrich the recall
+*list itself* (the list still stores bare titles) — that's a separate,
+still-open decision: whether to change the stored format (and how to
+migrate or accept that old entries won't backfill).
 
 ## The failure mode to test for
 
@@ -163,9 +204,17 @@ cases in the regression suite need ≥3 runs.
 
 ## Not solved by this
 
-- **Defect #3 (no relevance threshold).** Nonsense queries still fuzzy-match
-  to real content, and a recall list arguably gives them one more thing to
-  match against. Still needs a threshold in the script.
+- **Defect #3a (title collisions) — solved, but by `voice-and-music.md`'s
+  search/play redesign, not by this.** Recall and search-candidate judgment
+  are independent mechanisms that happen to both have pointed at the right
+  answer in the one case tested ("Roomers") and it still wasn't enough —
+  see "Verified behaviour of the prompt block" above.
+- **Defect #3b (phonetic/garbled-recall mismatches) — still open.** This is
+  the case this feature was partly built for, and it's the one still
+  failing. Nonsense queries also still fuzzy-match to real content, and a
+  recall list arguably gives them one more thing to match against. Still
+  needs either a non-textual matching approach or a threshold in the
+  script — a better prompt has been tried and didn't close it.
 - **Per-person memory.** The voice satellite does not identify speakers. One
   shared household list; requests cannot be separated by person.
 
@@ -175,9 +224,11 @@ cases in the regression suite need ≥3 runs.
   attribute
 - **Is the automation live and firing** — its `last_triggered` attribute,
   which should track the most recent play
-- **Are the event fires in the script** — `ha_config_get_script`; each
-  playback branch should carry an `event:` action between its result and its
-  stop
+- **Is the event fire in `play_music`** — `ha_config_get_script`; the
+  single playback path should carry an `event:` action between its result
+  and its stop. (Before the 2026-08-19 search/play split this was ten
+  branches in one script, each needing the same check — now there's one
+  path to check.)
 - **Is the chain working** — call the script directly, then re-read the
   options list; the resolved name should be at the front
 - **MA config entry ID** for the warm-start call — `ha_get_integration`
