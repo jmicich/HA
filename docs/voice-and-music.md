@@ -552,6 +552,53 @@ model or prompt changes, separately from correctness.
 
 The last two exist because of the recall list; see `music-recall-memory.md`.
 
+### Prompt slimming, 2026-08-20 — what came out and what it cost
+
+Tier 1's prompt is paid on **every utterance in the house**, so it was cut
+from ~1,739 to ~1,142 tokens. Nothing was removed for brevity: each cut was
+either a rule stated in two places or a tool measured not to work.
+
+- **`clarify_music_choice` un-exposed.** It carried ten fields — the largest
+  tool schema here — and this document already recorded that the model does
+  not reliably call it, across six consecutive negative results. Paying for
+  it on every request bought nothing. The script itself is left in place as
+  a record; un-exposing is what removes the cost, and it is reversible.
+- **The searching-and-choosing rules now live only in `search_music`'s
+  description.** They were previously stated there *and* in the prompt. The
+  tool description is the better home: it is what the model reads at the
+  moment it decides.
+- **Repeat routing detail likewise lives only in `set_music_repeat`'s
+  description**, which is the copy that earned its length by fixing a real
+  refusal.
+
+**The general rule this suggests:** when a rule is about *how to use one
+tool*, put it in that tool's description, not the prompt. The prompt should
+carry only what spans tools — routing between them, and how to report.
+
+### Negative result: "repeat, no target" resists prompt wording entirely
+
+The known-fragile case degraded further and **three separate wording fixes
+failed to move it**, in order:
+
+1. The pre-existing prompt rule ("omit the player field when the user names
+   no room") — 1 of 3.
+2. An explicit prompt instruction added on top ("do not ask which speaker;
+   omitting it is correct") — 0 of 3.
+3. The same instruction moved into the `player` field's own description,
+   which is the mechanism that fixed this tool's *earlier* refusal — 0 of 1.
+
+The model correctly identifies the tool and then refuses to call it without
+a speaker, asking instead. Asking is the safer failure and still a failure.
+
+This is the third independent confirmation of the rule already stated under
+Open Defects: **prompt-level guardrails are not dependable at this model
+tier; anything that must not happen has to be structurally impossible.** The
+structural option here is to drop the `player` field from
+`set_music_repeat` entirely, so there is nothing to ask about and the script
+always uses its default. That trades away setting repeat on a *named*
+speaker — a real capability, rarely used — so it is a product decision, not
+a cleanup, and is deliberately left open rather than taken unilaterally.
+
 ### This suite is invalidated by tier-1 prompt changes that look unrelated
 
 The tier-1 agent both routes music *and* decides when to escalate a general

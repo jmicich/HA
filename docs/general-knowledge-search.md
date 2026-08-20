@@ -119,6 +119,39 @@ noise: in config C its share of the per-question cost was about 4%.
 Shrinking tier 1's prompt is therefore the only remaining lever with real
 leverage, and it improves every interaction, not just this feature.
 
+### Prompt caching would beat shrinking, and is not available to us
+
+The obvious better answer is not to shrink the prompt but to stop paying for
+it: tier 1 sends a near-identical multi-thousand-token prefix on every single
+utterance. Cached input costs a fraction of fresh input and prefills faster.
+
+**Measured cache hit rate: 0.0%**, across hundreds of requests. The reason is
+upstream, not configuration — Home Assistant's `open_router` integration
+builds its request with `extra_body` carrying only `require_parameters` and
+tools, and sets no `cache_control` anywhere. The provider supports caching;
+the integration never asks for it.
+
+So this is not a knob we own. It is a small upstream change (a
+`cache_control` breakpoint on the system block) and worth raising there,
+because it would recover more than any amount of editing prose — with
+nothing removed at all. **Check whether this is still true before doing
+further prompt surgery**; if the integration gains caching, most of the
+motivation for trimming disappears.
+
+### What trimming actually recovered
+
+Measured on the live tier-1 routing call, before and after:
+
+| | ~tokens |
+| --- | --- |
+| Before | 7,322 |
+| After | 6,153 |
+| **Saved** | **1,169 (−16%)** |
+
+The prose itself went from ~1,739 to ~1,142 tokens (−34%). Nothing was
+deleted for brevity's sake — every cut was either a rule stated twice or a
+tool that does not work. See `voice-and-music.md` for what came out and why.
+
 ### Why the fastest option was not chosen
 
 C was more than twice as fast as A and the most consistent of the four. It

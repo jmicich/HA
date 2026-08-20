@@ -136,19 +136,15 @@ search_music:
   alias: Search Music
   icon: mdi:music-note-plus
   description: 'Search the music library and streaming services for something to play.
-    Always call this BEFORE play_music — it returns real candidate matches for you
+    Always call this BEFORE play_music - it returns real candidate matches for you
     to choose from and plays nothing itself. Search results are ordered only by each
     provider''s own internal ranking, not by correctness: a title can match several
     unrelated real songs. Pick the candidate that actually matches what was asked,
     using your own knowledge (the well-known original, the artist implied or named,
-    a specific version if the user asked for one) — do not just take the first result.
-    A candidate with a "note" field means it closely matches something recently played
-    in this house. If you would otherwise pick a DIFFERENT candidate than the noted
-    one, do not decide yourself — call clarify_music_choice with the noted candidate
-    as one option and the candidate you would otherwise pick as the other, and let
-    the user choose. Only skip clarify_music_choice when the noted candidate is already
-    the one you would pick anyway, or when the request clearly asked for something
-    specific the note does not match (e.g. it named a different artist).'
+    a specific version if the user asked for one) - do not just take the first result.
+    A candidate with a "note" field closely matches something recently played in this
+    house: prefer it when the request is vague or garbled, but not over a clearly
+    better match.'
   mode: restart
   fields:
     query:
@@ -617,7 +613,10 @@ set_music_repeat:
           - 'off'
     player:
       name: Player
-      description: Which speaker to set repeat on. Omit to use the Living Room Speaker.
+      description: Which speaker to set repeat on. OMIT THIS unless the user actually
+        named a room or speaker - omitting it is the correct, expected call and it
+        defaults to the Living Room Speaker. Never ask the user which speaker to use;
+        if they did not name one, just call this with mode only.
       required: false
       selector:
         entity:
