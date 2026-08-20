@@ -1,8 +1,9 @@
 # Home Assistant build-out — project overview
 
-Status as of 2026-08-18. Orientation doc: read this first, then the
+Status as of 2026-08-20. Orientation doc: read this first, then the
 feature-specific docs (`voice-and-music.md`, `music-recall-memory.md`,
-`dev-environment.md`, `wake-word-findings.md`).
+`general-knowledge-search.md`, `dev-environment.md`,
+`wake-word-findings.md`).
 
 ## Documentation principle
 
@@ -46,15 +47,20 @@ Three tiers, cheapest capable layer first:
 | --- | --- | --- |
 | 0 — local intents (hassil) | High-frequency exact phrases. Free, instant. | Exists, off |
 | 1 — cheap LLM | Intent extraction, entity resolution, synonyms, context | Live |
-| 2 — heavy model | Research, multi-source correlation, deep workflows | Not built |
+| 2 — heavy model | Research, multi-source correlation, deep workflows | **Live for general knowledge and web search** |
 
 Tier 0 → 1 routing is the built-in `prefer_local_intents` pipeline flag, not
-custom code. Tier 1 → 2 has no native mechanism; the plan is a script
-exposed to Assist as a tool, which the tier-1 model calls when a task
-exceeds it.
+custom code. Tier 1 → 2 has no native mechanism; it is a script exposed to
+Assist as a tool, which the tier-1 model calls when a task exceeds it.
 
-**The script-as-tool pattern is proven** — `script.play_music` works exactly
-this way and is the template to copy for tier 2.
+**The script-as-tool pattern is proven** — `script.play_music` established
+it, and tier 2 now uses it: the escalation script calls
+`conversation.process` against a second, stronger conversation subentry that
+has web search and no house access. See `general-knowledge-search.md` for
+the design, its suite, and the traps.
+
+Tier 2 currently covers general knowledge and current events only.
+Multi-source correlation and deep workflows remain unbuilt.
 
 ## Platform constraints
 
@@ -112,7 +118,9 @@ Roughly by leverage:
 2. **Expose real entities** as hardware arrives. Everything else is
    bottlenecked on this.
 3. **Area aliases.** None set. Helps both tiers, cheap to add.
-4. **Tier 2 escalation script** — copy the `script.play_music` pattern.
+4. **Extend tier 2 beyond Q&A** — the escalation script exists and works
+   (`general-knowledge-search.md`); multi-source correlation and deep
+   workflows are the unbuilt part.
 5. **Custom local intents** once the entity surface is stable. These are
    files in `/config`, which MCP cannot write — needs File editor, SSH, or
    Samba. Note also that the LLM agent does not support HA *sentence
@@ -134,6 +142,12 @@ integration UI (upstream bug; OpenRouter is the alternative path).
 - **Test closed-loop:** `conversation.process` with `return_response: true`,
   then read traces. Don't ask the human to speak to a device.
 - **Verify current config before changing it**; this system is in active flux.
+- **Never check a live answer against your own recollection.** An assistant
+  working here has a knowledge cutoff older than the house's current date.
+  When a time-sensitive answer contradicts what you "know", you are the
+  suspect party — verify with a narrow, dated search instead. This rule was
+  written after an extended investigation into a hallucination bug that did
+  not exist; see `general-knowledge-search.md`.
 - **Record durable decisions in these docs** rather than leaving them in
   chat — but record *decisions*, not *state*.
 - **When a diagnosis turns out wrong, say so plainly and move on.**
