@@ -97,6 +97,10 @@ cheap to run. Current mapping:
 | --- | --- |
 | `script.play_music`, the agent prompt, MA provider ranking or resolution order | the regression suite in `docs/voice-and-music.md` |
 | the music recall list, its automation, or the event payload | the same suite — its last two cases exist for recall |
+| the tier-2 escalation script, either conversation subentry's prompt or model, or its `web_search` mode | the regression suite in `docs/general-knowledge-search.md` |
+
+A tier-1 prompt change touches **both** suites — the same prompt routes
+music and decides when to escalate.
 
 That regression table **is** the music playback integration suite; treat it
 as a test suite, not documentation. Extend this mapping as other subsystems
@@ -116,10 +120,20 @@ The music suite has constraints that make a careless run worse than no run:
 - **Verify by reading player state, never the spoken reply.** The model
   reports actions it did not take.
 
-These run against a live HA instance via `conversation.process`, so they are
-not automatable in CI today. Until they are, "run the tests" for music means
-running that suite by hand and reporting per-case results — including which
-cases were not run.
+The general-knowledge suite has one constraint that outranks the rest:
+
+- **Establish ground truth with a narrow, dated search at test time.** Never
+  score an answer against your own knowledge — your cutoff is older than the
+  house's current date, so a correct answer about anything recent can look
+  like a hallucination. An entire investigation was lost to this once; the
+  full account is in `docs/general-knowledge-search.md`.
+- **Score Correct / Abstained / Wrong.** Only *Wrong* — confident and
+  incorrect — is a hard failure. Abstaining is unhelpful, not unsafe.
+
+Both suites run against a live HA instance via `conversation.process`, so
+they are not automatable in CI today. Until they are, "run the tests" means
+running the relevant suite by hand and reporting per-case results —
+including which cases were not run.
 
 ### Default workflow
 
