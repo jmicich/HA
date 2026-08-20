@@ -38,6 +38,7 @@ IMPORT_DENY = DENY + (
     "deps/*",
     ".HA_VERSION",
     ".uuid",
+    ".ha_run.lock",            # HA's own run lock; present only while running
     ".cache",
     ".cache/*",
     "backups",

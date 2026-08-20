@@ -176,3 +176,6 @@ The rest are stable at one run.
   agent ID is inside its `conversation.process` call
 - **Cost per escalated question** — two model calls, one per tier. Check the
   provider's own usage dashboard, not an estimate written here
+- **What both prompts said as of the last commit** — `ha_export/
+  conversation_agents.yaml`, refreshed by `scripts/export_ha.py`. It is a
+  backup, not the live value: audit the instance when the two could differ
