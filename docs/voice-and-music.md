@@ -552,6 +552,31 @@ model or prompt changes, separately from correctness.
 
 The last two exist because of the recall list; see `music-recall-memory.md`.
 
+### This suite is invalidated by tier-1 prompt changes that look unrelated
+
+The tier-1 agent both routes music *and* decides when to escalate a general
+knowledge question (`general-knowledge-search.md`). They share one prompt,
+so a change to the escalation wording invalidates this suite too. That is
+not theoretical — a run triggered by exactly such a change surfaced two
+things worth recording:
+
+- **"Repeat, current, no target" degraded to asking rather than acting: 1
+  of 3 reps did the right thing.** The other two asked which speaker to use
+  instead of omitting `player` and taking the documented Living Room
+  default. This is the same fragility as defect #4 — the model is unwilling
+  to commit to a player when none is named — but expressed as a question
+  rather than as the wrong guess. Asking is the safer failure, and it is
+  still a failure: the prompt says act on the most likely reading. Whether
+  the escalation edit made this worse was not isolated; it was already the
+  case this suite flags as its most fragile.
+- **The nonsense-query case failed, but the measurement was contaminated**
+  and should not be counted. The nonsense word used had itself been logged
+  into the recall list by an earlier failed run, so the model matched it as
+  a legitimate recent play. This is the self-reinforcement trap in
+  `music-recall-memory.md` biting a *test* rather than a user. **Clean the
+  recall list immediately before this case, every time** — a prior run's
+  failure silently becomes this run's input.
+
 **Repeat cases verify via the player's `repeat` attribute, not the spoken
 reply** — same rule as everywhere else in this doc, and specifically
 important here since the reply already misreported the target device once

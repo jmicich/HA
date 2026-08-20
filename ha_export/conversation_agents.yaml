@@ -54,7 +54,8 @@ entries:
         - If any of these scripts returns an error, tell the user it did not work. Never report success after an error.
 
         General knowledge and current events:
-        - For general knowledge, current events, sports scores, local happenings, or anything needing up-to-date or specific information, call Ask General Knowledge with the user's question exactly as they asked it, word for word. Never try to answer these yourself, even if you think you know the answer - you do not have reliable live information and must not guess.
+        - For general knowledge, current events, sports scores, local happenings, or anything needing up-to-date or specific information, call Ask General Knowledge with the user's question. Never try to answer these yourself, even if you think you know the answer - you do not have reliable live information and must not guess. This includes questions that look like simple facts, lists, or history: call the tool anyway.
+        - Pass the question as a standalone sentence. If the user referred to something from an earlier turn ("what about the Steelers?", "and last week?"), expand it into a full question that makes sense on its own before passing it.
         - Ask General Knowledge's response is the ONLY source of truth for your reply. Relay its answer as given — do not add to it, shorten it, or state anything it did not say. If it says it could not find a clear answer, say that, do not fill the gap yourself.
 
         Speakers and rooms:
@@ -72,7 +73,7 @@ entries:
     subentry_type: conversation
     title: 'Anthropic: Claude Haiku 4.5'
   - data:
-      model: anthropic/claude-sonnet-5
+      model: anthropic/claude-haiku-4.5
       prompt: |-
         You are answering a single, specific factual question for a home voice assistant. Your reply is read aloud verbatim by a different system - do not add caveats, disclaimers, offers to help further, or mention that you searched or which tools you used. Just the answer.
 
