@@ -575,29 +575,43 @@ either a rule stated in two places or a tool measured not to work.
 tool*, put it in that tool's description, not the prompt. The prompt should
 carry only what spans tools — routing between them, and how to report.
 
-### Negative result: "repeat, no target" resists prompt wording entirely
+### "Repeat, no target" — fixed, and the diagnosis was instructive
 
-The known-fragile case degraded further and **three separate wording fixes
-failed to move it**, in order:
+**Status: 3 of 3, verified by reading the `repeat` attribute.** Getting there
+corrected a wrong theory, so the route matters more than the result.
 
-1. The pre-existing prompt rule ("omit the player field when the user names
-   no room") — 1 of 3.
-2. An explicit prompt instruction added on top ("do not ask which speaker;
-   omitting it is correct") — 0 of 3.
-3. The same instruction moved into the `player` field's own description,
-   which is the mechanism that fixed this tool's *earlier* refusal — 0 of 1.
+The case broke immediately after the prompt slimming above — from 1 of 3 to
+0 of 4. Three attempts to argue the model out of it all failed: the existing
+prompt rule, an explicit "do not ask which speaker" added to the prompt, and
+that same instruction moved into the `player` field's own description. The
+conclusion drawn at the time — *this needs a structural fix, wording will
+never work* — matched this document's own standing rule and was wrong.
 
-The model correctly identifies the tool and then refuses to call it without
-a speaker, asking instead. Asking is the safer failure and still a failure.
+**The structural fix was applied and did not fix it either.** With `player`
+removed entirely, so there was literally nothing to ask about, the model
+simply moved its question to the other axis: it began asking *which song was
+playing*, for a tool whose description states it has no song field.
 
-This is the third independent confirmation of the rule already stated under
-Open Defects: **prompt-level guardrails are not dependable at this model
-tier; anything that must not happen has to be structurally impossible.** The
-structural option here is to drop the `player` field from
-`set_music_repeat` entirely, so there is nothing to ask about and the script
-always uses its default. That trades away setting repeat on a *named*
-speaker — a real capability, rarely used — so it is a product decision, not
-a cleanup, and is deliberately left open rather than taken unilaterally.
+What actually worked was restoring specificity the slimming had removed. The
+old routing rule listed the trigger phrasings explicitly — "put this on
+loop", "turn off repeat", and others. The trimmed version kept only "repeat
+this" and "stop repeating", and the failing request was *"put this song on
+repeat"*. Listing the phrasings again fixed it on the next attempt, 3 of 3.
+
+Two things worth carrying forward:
+
+- **That phrase list was load-bearing, not duplication.** It looked like
+  verbose restatement of a rule already implied elsewhere. It was doing the
+  work. When trimming a prompt, near-duplicate *examples* are the most
+  dangerous thing to cut, because what they buy is invisible until a request
+  falls outside what survives.
+- **"Wording can't fix this" is a claim that needs testing, not assuming.**
+  Three failures in a row made the structural explanation feel settled, and
+  it was reached before the actual cause had been isolated. The structural
+  change was kept regardless — `set_music_repeat` no longer takes a `player`
+  and resolves the speaker from whatever is currently playing, which is both
+  closer to what "repeat *this*" means and removes this tool's exposure to
+  defect #4 — but it was not what fixed the bug.
 
 ### This suite is invalidated by tier-1 prompt changes that look unrelated
 

@@ -131,12 +131,33 @@ builds its request with `extra_body` carrying only `require_parameters` and
 tools, and sets no `cache_control` anywhere. The provider supports caching;
 the integration never asks for it.
 
-So this is not a knob we own. It is a small upstream change (a
-`cache_control` breakpoint on the system block) and worth raising there,
-because it would recover more than any amount of editing prose — with
-nothing removed at all. **Check whether this is still true before doing
-further prompt surgery**; if the integration gains caching, most of the
-motivation for trimming disappears.
+So this is not a knob we own *on this integration*. Two dead ends worth
+recording so they are not re-explored: provider-side presets cannot supply
+it either, because `cache_control` is a per-message annotation rather than a
+request parameter, and the integration's model field is a validated
+dropdown that will not accept a preset reference.
+
+**But Home Assistant's own `anthropic` integration supports it directly**,
+and has since before this was built. It sets `cache_control` on the system
+block, exposes caching as a configuration option with `off` / `prompt` /
+`automatic` modes, and **defaults to `prompt` — caching on**. It also
+carries several things the OpenRouter subentry does not expose at all: a
+`max_tokens` control, and a web-search option with structured location
+settings (city, region, country, timezone) that would replace the
+coordinates-in-the-prompt workaround described above.
+
+That makes the caching gap a **migration decision, not an upstream wait**.
+The trade is real and runs against a stated architecture goal: this project
+chose OpenRouter deliberately as the multi-provider path
+(`project-overview.md`), and going direct to Anthropic narrows that to one
+vendor and needs a second API key. Set against it, tier 1 is the expensive
+call — a large, near-identical prefix on every utterance in the house — and
+it is exactly the shape caching exists for.
+
+A hybrid is available and probably the right first step: **move tier 1,
+leave tier 2 where it is.** Tier 1 needs no web search and pays the big
+prefix; tier 2's prompt is a few hundred tokens, so caching would buy it
+almost nothing. Either way, a move re-runs both suites.
 
 ### What trimming actually recovered
 

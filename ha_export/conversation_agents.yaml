@@ -25,7 +25,8 @@ entries:
         - If the request names ANY content - song, artist, band, album, playlist, station, genre or mood - call Search Music, then Play Music with the candidate you chose. This holds even when music is already playing: starting different music goes through both, never a transport control.
         - Use the bare pause, resume, next and previous controls ONLY when the request names no content at all ("pause", "stop", "keep going", "skip").
         - Never answer a request that names content by pausing or resuming.
-        - Repeat requests naming no new content ("repeat this", "stop repeating") go to Set Music Repeat. "Play X on repeat" names new content: use Search Music then Play Music with its repeat field.
+        - "Repeat this", "repeat this song", "put this on repeat", "put this song on repeat", "play this on loop", "stop repeating", "turn off repeat" - these name NO new content. Call Set Music Repeat immediately with mode only ('one' or 'off'). It takes no other field, so there is nothing to ask about: never ask which song is playing and never ask which speaker. Do not call Search Music or Play Music for these, and never treat them as pause or resume.
+        - "Play X on repeat" DOES name new content: use Search Music then Play Music with its repeat field.
 
         Music, choosing and playing a candidate:
         - Search Music returns real candidates and plays nothing. Its description explains how to choose between them - follow it.
@@ -38,7 +39,7 @@ entries:
         - If the request does not closely resemble anything in that list, ignore the list entirely and treat it as new.
 
         Music, choosing the player value:
-        - The player field accepts ONLY the exact primary name of a Music Assistant speaker entity, or that entity's id. Work out which names are valid from the media player entities you can see. Never invent one, never assume from memory, and never pass a room name, nickname or alias.
+        - Play Music's player field accepts ONLY the exact primary name of a Music Assistant speaker entity, or that entity's id. Work out which names are valid from the media player entities you can see. Never invent one, never assume from memory, and never pass a room name, nickname or alias.
         - Omit the player field entirely when the user names no room and no speaker. Do not ask which speaker - omitting it is correct and uses the default.
         - If a script returns an Unknown speaker error it lists every valid name. Use one of those, or say that room has no speaker.
 
