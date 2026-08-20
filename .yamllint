@@ -4,6 +4,20 @@ rules:
   line-length:
     max: 120
     level: warning
+  # Cosmetic-only rules are warnings for this tree, not errors.
+  #
+  # `config/` mirrors a live instance whose formatting this repo does not
+  # control: HA and its UI editors rewrite these files, and seed_config.py's
+  # entire value is copying them back byte-faithfully. A cosmetic rule that
+  # *fails* CI therefore punishes fidelity, and the tempting fix is to
+  # hand-edit the seeded file — which is exactly how the repo silently stops
+  # matching the instance while still claiming to be its source of truth.
+  #
+  # This is the same call already made above for line-length, which fires on
+  # HA's own shipped blueprints. A leading blank line appeared in the live
+  # configuration.yaml between two seeds and red-CI'd a faithful import.
+  empty-lines:
+    level: warning
   # Home Assistant YAML uses `on:` as a mapping key in some schemas, and
   # truthy checks fire on it unhelpfully.
   truthy:

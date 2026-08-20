@@ -249,6 +249,15 @@ the repo silently reverts your edit — the repo is the source of truth.
 hand-edited `automations.yaml` over entries the UI owns loses UI edits made
 since. Hand-written automation belongs in `packages/`.
 
+**A faithful seed can fail CI, and the tempting fix is the wrong one.** HA
+and its editors rewrite these files on their own schedule — a leading blank
+line appeared in the live `configuration.yaml` between two seeds and turned
+a byte-accurate import into a red build. Hand-editing the seeded file to
+please the linter is exactly how the repo stops matching the instance while
+still claiming to be its source of truth. Cosmetic yamllint rules are
+therefore warnings for this tree (see `.yamllint`); fix real drift by
+correcting the repo and **deploying**, so both sides agree.
+
 **pytest may be installed outside the system Python.** If `python -m pytest`
 reports no module, call the `pytest` executable directly — it carries its
 own interpreter.
