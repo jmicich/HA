@@ -262,6 +262,7 @@ and are overwritten by the next deploy.
 
 ```
 python scripts/seed_config.py --source H:/         # bootstrap: live -> repo
+python scripts/export_ha.py --source H:/ --apply   # .storage -> ha_export/ (backup only)
 pytest tests/ -q                                   # tooling tests
 yamllint config/                                   # YAML lint
 python scripts/sync_config.py --target H:/         # preview (dry run)
@@ -281,6 +282,35 @@ target, and refuses a directory that does not look like an HA config tree. Its s
 the first deploy; `sync_config.py` goes repo → live. A wrong-direction sync
 overwrites a working instance and looks identical to a correct one, so the
 repo must mirror the instance before it can act as its source of truth.
+
+### `ha_export/` is a backup, not a deploy source
+
+Not everything authored in HA is a file. Scripts and automations land in
+`config/scripts.yaml` and `config/automations.yaml`, which `seed_config.py`
+already captures — **but conversation agent prompts, helper definitions,
+pipelines, and exposure settings live in `.storage/`**, which `seed_config`
+refuses wholesale because those files interleave authored config with API
+keys and the auth store. Prompts are config-flow only and cannot be written
+as YAML under `config/` at all.
+
+`export_ha.py` reads the same `.storage/` files and emits only the authored,
+redacted subset into `ha_export/`. Rules:
+
+- **Never deployed.** `sync_config.py` only ever reads `config/`, and
+  `ha_export/` sits outside it deliberately. Editing it changes nothing.
+- **Re-run it whenever a prompt, script, helper, or pipeline changes**, and
+  commit the result alongside the change. That commit *is* the review and
+  the history — without it, the highest-churn artifact in this project
+  reaches production unreviewed.
+- **Read the diff.** Redaction is a backstop. A real export leaked an
+  elided API key that HA stores as a config entry *title*; the pattern that
+  should have caught it did not, and the diff scan did. Its safety
+  properties live in `tests/test_export_ha.py` — extend them when changing
+  it.
+
+So "the repo is the source of truth" holds for `config/`, and for
+`ha_export/` the weaker claim holds instead: it is a faithful, reviewable
+copy, restored by hand.
 
 Full procedure and traps: `docs/local-dev-setup.md`.
 

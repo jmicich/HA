@@ -117,9 +117,9 @@ comment or a hardcoded URL in an automation will pass every automated check
 and still not belong in git.
 
 What it refuses to import, on top of the deploy deny list: `deps/`,
-`.HA_VERSION`, `.uuid`, `backups/`, `image/`, `.cache/`, HACS-downloaded
-resources under `www/community/`, the HACS component itself, Z-Wave dumps,
-and any nested `.git/`.
+`.HA_VERSION`, `.uuid`, `.ha_run.lock`, `backups/`, `image/`, `.cache/`,
+HACS-downloaded resources under `www/community/`, the HACS component itself,
+Z-Wave dumps, and any nested `.git/`.
 
 **It will not seed over uncommitted changes.** Untracked files in `config/`
 count as uncommitted, so a second scoped seed is blocked until the first is
@@ -129,6 +129,61 @@ recover. `--allow-dirty` overrides it.
 **Verifying the seed worked:** deploy straight back with no `--apply`. A
 faithful seed reports `0 new, 0 changed` — the repo and the instance agree.
 Anything else means something was missed or edited in between.
+
+## What seeding cannot reach: `.storage/`
+
+Seeding covers everything that *is* a file. It does not cover `.storage/`,
+and it never should: those files interleave authored configuration with the
+API keys, the auth store, and the entity registry. Copying them wholesale
+would put credentials in git.
+
+But that is also where the conversation agent prompts live — the artifact
+this project has iterated on hardest — along with helper definitions, Assist
+pipelines, and exposure settings. Prompts are config-flow only; there is no
+YAML form of them to seed. Left alone, the single most valuable thing in the
+system has no representation in git.
+
+`scripts/export_ha.py` closes that gap by *extracting* rather than copying:
+
+```
+python scripts/export_ha.py --source H:/            # preview
+python scripts/export_ha.py --source H:/ --apply    # writes ha_export/
+git diff ha_export/                                 # read it
+```
+
+It redacts by key name *and* by value shape, drops churny timestamps, and
+writes multi-line prompts as literal blocks so an edit diffs as an edit
+rather than a reflowed paragraph.
+
+**`ha_export/` is a backup and review artifact, not a deploy source.**
+`sync_config.py` only ever reads `config/`; nothing here is ever pushed to
+the instance, and editing these files changes nothing. Restoring from them
+is manual today.
+
+**Re-run it whenever a prompt, script, helper, or pipeline changes**, and
+commit the result with the change — that commit is the entire review trail
+for config that otherwise goes straight to production.
+
+### The trap that already bit
+
+The OpenRouter config entry's **title is its API key**, stored elided —
+shaped like `sk-or-v1-abc...xyz`. Redaction driven by key name alone keeps
+it, and the first real export did exactly that: the value pattern expected a
+full-length key, and the elided form is short and full of dots. Grepping the
+output before committing caught it; the tooling did not.
+
+It then nearly happened a second way. The fix was written up using the
+instance's *real* elided key as the illustrative example — in this document,
+a code comment, and a test fixture — which would have committed the very
+value that had just been redacted out of the export. Also caught by the same
+grep.
+
+Two rules this earns:
+
+- **Grep the export for credential shapes before every commit.** The tests
+  encode the known cases, but only cover shapes someone already thought of.
+- **Never paste a real credential into a doc, comment, or fixture, even an
+  elided one.** Use an obviously fake value of the same shape.
 
 ## The loop
 
@@ -194,6 +249,15 @@ the repo silently reverts your edit — the repo is the source of truth.
 hand-edited `automations.yaml` over entries the UI owns loses UI edits made
 since. Hand-written automation belongs in `packages/`.
 
+**A faithful seed can fail CI, and the tempting fix is the wrong one.** HA
+and its editors rewrite these files on their own schedule — a leading blank
+line appeared in the live `configuration.yaml` between two seeds and turned
+a byte-accurate import into a red build. Hand-editing the seeded file to
+please the linter is exactly how the repo stops matching the instance while
+still claiming to be its source of truth. Cosmetic yamllint rules are
+therefore warnings for this tree (see `.yamllint`); fix real drift by
+correcting the repo and **deploying**, so both sides agree.
+
 **pytest may be installed outside the system Python.** If `python -m pytest`
 reports no module, call the `pytest` executable directly — it carries its
 own interpreter.
@@ -204,6 +268,8 @@ own interpreter.
   the mapped drive
 - **What the deploy would change** — `sync_config.py --target … ` with no
   `--apply`
+- **Whether `ha_export/` is stale** — `export_ha.py --source … ` with no
+  `--apply`; `0 changed` means the committed copy matches the instance
 - **Whether the live config is valid** — `hass --script check_config -c /config`
 - **What HA actually loaded** — the HA log after a reload, plus a state read
   on an entity the change should have affected

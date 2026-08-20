@@ -1,24 +1,13 @@
 play_music:
   alias: Play Music
-  description: Play music on a speaker. Use for any request to play, put on, or start
-    music, whether by artist, album, song, playlist, radio station, genre or mood.
-    Returns the name of what actually started playing, which may differ from what
-    was asked for.
+  description: Play a specific item that was already found via search_music. Always
+    call search_music first and choose one of its candidates - do not call this with
+    a uri you were not given by search_music, and never invent or guess one. Returns
+    the name of what actually started playing.
   icon: mdi:music
   mode: restart
   sequence:
-  - action: music_assistant.search
-    data:
-      config_entry_id: 01KZTNVHAVM54QQGJJ22W5DP43
-      name: '{{ query }}'
-      media_type:
-      - artist
-      - album
-      - playlist
-      - track
-      - radio
-    response_variable: found
-  - alias: Resolve target and rank matches by provider
+  - alias: Resolve target player
     variables:
       p: '{{ player | default('''', true) | string }}'
       matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
@@ -49,27 +38,6 @@ play_music:
         {{ ns.found }}'
       target_player: '{{ matched if matched != '''' else ''media_player.living_room''
         }}'
-      uris_playlist: '{{ found.playlists | map(attribute=''uri'') | reject(''search'',
-        ''^bbc_sounds'') | list }}'
-      pick_playlist: '{{ ((uris_playlist | select(''search'', ''^library'') | list)
-        + (uris_playlist | select(''search'', ''^spotify'') | list) + (uris_playlist
-        | select(''search'', ''^apple_music'') | list) + uris_playlist) | first |
-        default('''', true) }}'
-      uris_album: '{{ found.albums | map(attribute=''uri'') | reject(''search'', ''^bbc_sounds'')
-        | list }}'
-      pick_album: '{{ ((uris_album | select(''search'', ''^library'') | list) + (uris_album
-        | select(''search'', ''^spotify'') | list) + (uris_album | select(''search'',
-        ''^apple_music'') | list) + uris_album) | first | default('''', true) }}'
-      uris_track: '{{ found.tracks | map(attribute=''uri'') | reject(''search'', ''^bbc_sounds'')
-        | list }}'
-      pick_track: '{{ ((uris_track | select(''search'', ''^library'') | list) + (uris_track
-        | select(''search'', ''^spotify'') | list) + (uris_track | select(''search'',
-        ''^apple_music'') | list) + uris_track) | first | default('''', true) }}'
-      uris_artist: '{{ found.artists | map(attribute=''uri'') | reject(''search'',
-        ''^bbc_sounds'') | list }}'
-      pick_artist: '{{ ((uris_artist | select(''search'', ''^library'') | list) +
-        (uris_artist | select(''search'', ''^spotify'') | list) + (uris_artist | select(''search'',
-        ''^apple_music'') | list) + uris_artist) | first | default('''', true) }}'
   - alias: Fail loudly if a named speaker did not resolve
     if:
     - condition: template
@@ -86,263 +54,67 @@ play_music:
             | unique | list }}'
     - stop: Unknown speaker
       response_variable: err
-  - alias: Play best available match
-    choose:
-    - alias: Requested track
-      conditions:
-      - condition: template
-        value_template: '{{ media_type | default('''', true) == ''track'' and pick_track
-          != '''' }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_track }}'
-          media_type: track
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.tracks | selectattr(''uri'', ''eq'', pick_track) |
-              map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: track
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    - alias: Requested album
-      conditions:
-      - condition: template
-        value_template: '{{ media_type | default('''', true) == ''album'' and pick_album
-          != '''' }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_album }}'
-          media_type: album
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.albums | selectattr(''uri'', ''eq'', pick_album) |
-              map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: album
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    - alias: Requested playlist or radio
-      conditions:
-      - condition: template
-        value_template: '{{ media_type | default('''', true) in [''playlist'', ''radio'']
-          and pick_playlist != '''' }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_playlist }}'
-          media_type: playlist
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.playlists | selectattr(''uri'', ''eq'', pick_playlist)
-              | map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: playlist
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    - alias: Artist intent via local album
-      conditions:
-      - condition: template
-        value_template: '{{ media_type | default('''', true) == ''artist'' and pick_album.startswith(''library'')
-          }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_album }}'
-          media_type: album
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.albums | selectattr(''uri'', ''eq'', pick_album) |
-              map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: album
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    - alias: Artist intent via playlist
-      conditions:
-      - condition: template
-        value_template: '{{ media_type | default('''', true) == ''artist'' and pick_playlist
-          != '''' }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_playlist }}'
-          media_type: playlist
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.playlists | selectattr(''uri'', ''eq'', pick_playlist)
-              | map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: playlist
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    - alias: Artist intent via album
-      conditions:
-      - condition: template
-        value_template: '{{ media_type | default('''', true) == ''artist'' and pick_album
-          != '''' }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_album }}'
-          media_type: album
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.albums | selectattr(''uri'', ''eq'', pick_album) |
-              map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: album
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    - alias: Playlist
-      conditions:
-      - condition: template
-        value_template: '{{ pick_playlist != '''' }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_playlist }}'
-          media_type: playlist
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.playlists | selectattr(''uri'', ''eq'', pick_playlist)
-              | map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: playlist
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    - alias: Album
-      conditions:
-      - condition: template
-        value_template: '{{ pick_album != '''' }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_album }}'
-          media_type: album
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.albums | selectattr(''uri'', ''eq'', pick_album) |
-              map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: album
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    - alias: Track
-      conditions:
-      - condition: template
-        value_template: '{{ pick_track != '''' }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_track }}'
-          media_type: track
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.tracks | selectattr(''uri'', ''eq'', pick_track) |
-              map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: track
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    - alias: Artist, last resort only
-      conditions:
-      - condition: template
-        value_template: '{{ pick_artist != '''' }}'
-      sequence:
-      - action: music_assistant.play_media
-        target:
-          entity_id: '{{ target_player }}'
-        data:
-          media_id: '{{ pick_artist }}'
-          media_type: artist
-          enqueue: replace
-      - variables:
-          result:
-            played: '{{ (found.artists | selectattr(''uri'', ''eq'', pick_artist)
-              | map(attribute=''name'') | list | first) | default(''unknown'', true)
-              }}'
-            kind: artist
-      - event: music_played
-        event_data:
-          played: '{{ result.played }}'
-          kind: '{{ result.kind }}'
-      - stop: Playback started
-        response_variable: result
-    default:
-    - stop: No music found matching that.
+  - action: music_assistant.play_media
+    target:
+      entity_id: '{{ target_player }}'
+    data:
+      media_id: '{{ uri }}'
+      media_type: '{{ kind }}'
+      enqueue: replace
+  - alias: Set repeat if requested
+    if:
+    - condition: template
+      value_template: '{{ repeat | default(false, true) }}'
+    then:
+    - action: media_player.repeat_set
+      target:
+        entity_id: '{{ target_player }}'
+      data:
+        repeat: one
+  - variables:
+      result:
+        played: '{{ name }}'
+        kind: '{{ kind }}'
+        repeat: '{{ repeat | default(false, true) }}'
+        player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
+          true) }}'
+  - event: music_played
+    event_data:
+      played: '{{ result.played }}'
+      kind: '{{ result.kind }}'
+      artist: '{{ artist | default('''', true) }}'
+  - stop: Playback started
+    response_variable: result
   fields:
-    query:
-      name: Query
-      description: 'What to play: an artist, album, song, playlist, or radio station.
-        If the user did not say what to play, pass a genre or mood such as chill or
-        rock.'
+    uri:
+      name: URI
+      description: The exact uri of the chosen candidate, copied verbatim from search_music's
+        results.
       required: true
+      selector:
+        text:
+    kind:
+      name: Kind
+      description: The chosen candidate's kind, from search_music's results.
+      required: true
+      selector:
+        select:
+          options:
+          - track
+          - album
+          - playlist
+          - radio
+    name:
+      name: Name
+      description: The chosen candidate's name, from search_music's results.
+      required: true
+      selector:
+        text:
+    artist:
+      name: Artist
+      description: The chosen candidate's artist, from search_music's results, if
+        it had one.
+      required: false
       selector:
         text:
     player:
@@ -353,6 +125,40 @@ play_music:
         entity:
           domain: media_player
           integration: music_assistant
+    repeat:
+      name: Repeat
+      description: True if the request asked to play this on repeat/on loop. Omit
+        or false otherwise.
+      required: false
+      selector:
+        boolean: {}
+search_music:
+  alias: Search Music
+  icon: mdi:music-note-plus
+  description: 'Search the music library and streaming services for something to play.
+    Always call this BEFORE play_music — it returns real candidate matches for you
+    to choose from and plays nothing itself. Search results are ordered only by each
+    provider''s own internal ranking, not by correctness: a title can match several
+    unrelated real songs. Pick the candidate that actually matches what was asked,
+    using your own knowledge (the well-known original, the artist implied or named,
+    a specific version if the user asked for one) — do not just take the first result.
+    A candidate with a "note" field means it closely matches something recently played
+    in this house. If you would otherwise pick a DIFFERENT candidate than the noted
+    one, do not decide yourself — call clarify_music_choice with the noted candidate
+    as one option and the candidate you would otherwise pick as the other, and let
+    the user choose. Only skip clarify_music_choice when the noted candidate is already
+    the one you would pick anyway, or when the request clearly asked for something
+    specific the note does not match (e.g. it named a different artist).'
+  mode: restart
+  fields:
+    query:
+      name: Query
+      description: 'What to search for: an artist, album, song, playlist, or radio
+        station. If the user did not say what to play, pass a genre or mood such as
+        chill or rock.'
+      required: true
+      selector:
+        text:
     media_type:
       name: Media Type
       description: 'What kind of thing was asked for. Use ''track'' for a named song,
@@ -369,3 +175,540 @@ play_music:
           - artist
           - playlist
           - radio
+    artist:
+      name: Artist
+      description: The performer's name, only if the request names one for a song
+        or album (e.g. 'play Yesterday by The Beatles' -> 'The Beatles'). Leave unset
+        for playlist, radio, bare artist, or genre/mood requests, or when no performer
+        was named.
+      required: false
+      selector:
+        text:
+  sequence:
+  - alias: Search
+    action: music_assistant.search
+    data:
+      config_entry_id: 01KZTNVHAVM54QQGJJ22W5DP43
+      name: '{{ query }}'
+      media_type:
+      - artist
+      - album
+      - playlist
+      - track
+      - radio
+    response_variable: found
+  - alias: Build candidate list
+    variables:
+      allowed_kinds: '{%- if media_type is defined and media_type in [''track'',''album'',''playlist'',''radio'']
+        -%}
+
+        {{ [media_type] }}
+
+        {%- elif media_type is defined and media_type == ''artist'' -%}
+
+        {{ [''playlist'',''album''] }}
+
+        {%- else -%}
+
+        {{ [''playlist'',''album'',''track''] }}
+
+        {%- endif -%}'
+      artist_l: '{{ artist | default('''', true) | lower }}'
+      recall_match: '{%- macro cdice(a, b) -%}
+
+        {%- set al = a | lower | replace('' '', '''') -%}
+
+        {%- set bl = b | lower | replace('' '', '''') -%}
+
+        {%- set nsb = namespace(remaining=(bl | list)) -%}
+
+        {%- set nsc = namespace(n=0) -%}
+
+        {%- for ch in (al | list) -%}
+
+        {%- if ch in nsb.remaining -%}
+
+        {%- set nsc.n = nsc.n + 1 -%}
+
+        {%- set rem = namespace(new=[], done=false) -%}
+
+        {%- for x in nsb.remaining -%}
+
+        {%- if x == ch and not rem.done -%}
+
+        {%- set rem.done = true -%}
+
+        {%- else -%}
+
+        {%- set rem.new = rem.new + [x] -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- set nsb.remaining = rem.new -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- set denom = (al|length)+(bl|length) -%}
+
+        {{- ((2*nsc.n)/denom) if denom > 0 else 0 -}}
+
+        {%- endmacro -%}
+
+        {%- set recall_options = state_attr(''input_select.music_recall'', ''options'')
+        | default([], true) -%}
+
+        {%- set nsm = namespace(best='''', score=0) -%}
+
+        {%- for r in recall_options -%}
+
+        {%- set s = cdice(query, r) | float -%}
+
+        {%- if s > nsm.score -%}
+
+        {%- set nsm.score = s -%}
+
+        {%- set nsm.best = r -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {{ nsm.best if nsm.score >= 0.5 else '''' }}'
+      candidates: '{%- set ns = namespace(items=[]) -%}
+
+        {%- for kind, bucket in [(''track'', found.tracks), (''album'', found.albums),
+        (''playlist'', found.playlists), (''radio'', found.radio)] -%}
+
+        {%- if kind in allowed_kinds -%}
+
+        {%- set filtered = bucket | rejectattr(''uri'', ''search'', ''^bbc_sounds'')
+        | list -%}
+
+        {%- set ms = namespace(matched=[]) -%}
+
+        {%- if artist_l != '''' and kind in [''track'',''album''] -%}
+
+        {%- for it in filtered -%}
+
+        {%- for a in (it.artists | default([], true)) -%}
+
+        {%- if artist_l in (a.name | default('''', true) | lower) -%}
+
+        {%- set ms.matched = ms.matched + [it.uri] -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- endfor -%}
+
+        {%- endif -%}
+
+        {%- set nsp = namespace(pool=[]) -%}
+
+        {%- if ms.matched | length > 0 -%}
+
+        {%- for it in filtered -%}
+
+        {%- if it.uri in ms.matched -%}
+
+        {%- set nsp.pool = nsp.pool + [it] -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- else -%}
+
+        {%- set nsp.pool = filtered -%}
+
+        {%- endif -%}
+
+        {%- set pool = nsp.pool -%}
+
+        {%- set rc = namespace(recall=[], other=[]) -%}
+
+        {%- if recall_match != '''' -%}
+
+        {%- for it in pool -%}
+
+        {%- if (it.name | lower | trim) == (recall_match | lower | trim) -%}
+
+        {%- set rc.recall = rc.recall + [it] -%}
+
+        {%- else -%}
+
+        {%- set rc.other = rc.other + [it] -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- else -%}
+
+        {%- set rc.other = pool -%}
+
+        {%- endif -%}
+
+        {%- set other_ranked = (rc.other | selectattr(''uri'', ''search'', ''^library'')
+        | list) + (rc.other | selectattr(''uri'', ''search'', ''^spotify'') | list)
+        + (rc.other | selectattr(''uri'', ''search'', ''^apple_music'') | list) +
+        rc.other -%}
+
+        {%- set ranked = rc.recall + other_ranked -%}
+
+        {%- set ns2 = namespace(seen=[]) -%}
+
+        {%- for it in ranked -%}
+
+        {%- if it.uri not in ns2.seen -%}
+
+        {%- set ns2.seen = ns2.seen + [it.uri] -%}
+
+        {%- if (ns.items | selectattr(''kind'',''eq'',kind) | list | length) < 4 -%}
+
+        {%- set ns.items = ns.items + [{''uri'': it.uri, ''kind'': kind, ''name'':
+        it.name, ''artist'': ((it.artists | default([], true) | map(attribute=''name'')
+        | join('', '')) if it.artists is defined else ''''), ''note'': (''matches
+        something recently played'' if it in rc.recall else '''')}] -%}
+
+        {%- endif -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- set final = (ns.items | selectattr(''note'', ''ne'', '''') | list) + (ns.items
+        | selectattr(''note'', ''eq'', '''') | list) -%}
+
+        {{ final }}'
+  - variables:
+      result:
+        candidates: '{{ candidates }}'
+  - stop: Search complete
+    response_variable: result
+clarify_music_choice:
+  alias: Clarify Music Choice
+  icon: mdi:comment-question
+  description: Use this INSTEAD of play_music when you genuinely cannot choose between
+    two real search_music candidates — for example, a candidate marked with a recently-played
+    note conflicts with the one you would otherwise pick by type or ranking. Speaks
+    a short question out loud on the house's voice speaker and waits for a spoken
+    answer, then plays whichever the user picked. This takes noticeably longer than
+    a normal play (a full extra spoken exchange) — only use it when truly undecided,
+    never as a routine step and never when one candidate is clearly right.
+  mode: restart
+  fields:
+    question:
+      name: Question
+      description: A short spoken question naming both options plainly, e.g. "Did
+        you mean the playlist called Roomers, or Rumours by Fleetwood Mac?"
+      required: true
+      selector:
+        text:
+    option_a_uri:
+      name: Option A URI
+      required: true
+      selector:
+        text:
+    option_a_kind:
+      name: Option A Kind
+      required: true
+      selector:
+        select:
+          options:
+          - track
+          - album
+          - playlist
+          - radio
+    option_a_name:
+      name: Option A Name
+      required: true
+      selector:
+        text:
+    option_a_artist:
+      name: Option A Artist
+      required: false
+      selector:
+        text:
+    option_b_uri:
+      name: Option B URI
+      required: true
+      selector:
+        text:
+    option_b_kind:
+      name: Option B Kind
+      required: true
+      selector:
+        select:
+          options:
+          - track
+          - album
+          - playlist
+          - radio
+    option_b_name:
+      name: Option B Name
+      required: true
+      selector:
+        text:
+    option_b_artist:
+      name: Option B Artist
+      required: false
+      selector:
+        text:
+    player:
+      name: Player
+      description: Which speaker to play the chosen answer on. Omit to use the Living
+        Room Speaker.
+      required: false
+      selector:
+        entity:
+          domain: media_player
+          integration: music_assistant
+  sequence:
+  - alias: Resolve target player
+    variables:
+      p: '{{ player | default('''', true) | string }}'
+      matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
+        ''defined'') | list -%}
+
+        {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
+        | list) + (candidates | selectattr(''name'', ''eq'', p) | map(attribute=''entity_id'')
+        | list) -%}
+
+        {%- set ns = namespace(found=(direct | first | default('''', true))) -%}
+
+        {%- if ns.found == '''' and p != '''' -%}
+
+        {%- for c in candidates -%}
+
+        {%- set an = area_name(c.entity_id) -%}
+
+        {%- if ns.found == '''' and an and (an | lower) in (p | lower) -%}
+
+        {%- set ns.found = c.entity_id -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- endif -%}
+
+        {{ ns.found }}'
+      target_player: '{{ matched if matched != '''' else ''media_player.living_room''
+        }}'
+  - alias: Fail loudly if a named speaker did not resolve
+    if:
+    - condition: template
+      value_template: '{{ p != '''' and matched == '''' }}'
+    then:
+    - variables:
+        err:
+          error: No speaker is named '{{ p }}'. Nothing was played. Retry using one
+            of the exact speaker names listed.
+          valid_speaker_names: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') | map(attribute=''name'') | list }}'
+          valid_rooms: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') | map(attribute=''entity_id'') | map(''area_name'') | select(''string'')
+            | unique | list }}'
+    - stop: Unknown speaker
+      response_variable: err
+  - alias: Ask the question
+    action: assist_satellite.ask_question
+    data:
+      entity_id: assist_satellite.home_assistant_voice_0a9a69_assist_satellite
+      question: '{{ question }}'
+      answers: '{%- set a_sentences = [option_a_name] + ([option_a_artist] if option_a_artist
+        | default('''', true) != '''' else []) + [''the '' + option_a_kind] -%}
+
+        {%- set b_sentences = [option_b_name] + ([option_b_artist] if option_b_artist
+        | default('''', true) != '''' else []) + [''the '' + option_b_kind] -%}
+
+        {{ [{''id'': ''a'', ''sentences'': a_sentences}, {''id'': ''b'', ''sentences'':
+        b_sentences}] }}'
+    response_variable: answer
+  - choose:
+    - alias: User picked option A
+      conditions:
+      - condition: template
+        value_template: '{{ answer is defined and answer.id == ''a'' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ option_a_uri }}'
+          media_type: '{{ option_a_kind }}'
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ option_a_name }}'
+            kind: '{{ option_a_kind }}'
+            player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
+              true) }}'
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+          artist: '{{ option_a_artist | default('''', true) }}'
+      - stop: Playback started
+        response_variable: result
+    - alias: User picked option B
+      conditions:
+      - condition: template
+        value_template: '{{ answer is defined and answer.id == ''b'' }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ option_b_uri }}'
+          media_type: '{{ option_b_kind }}'
+          enqueue: replace
+      - variables:
+          result:
+            played: '{{ option_b_name }}'
+            kind: '{{ option_b_kind }}'
+            player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
+              true) }}'
+      - event: music_played
+        event_data:
+          played: '{{ result.played }}'
+          kind: '{{ result.kind }}'
+          artist: '{{ option_b_artist | default('''', true) }}'
+      - stop: Playback started
+        response_variable: result
+    default:
+    - variables:
+        err:
+          error: No answer was understood, or nothing was said in time. Nothing was
+            played.
+    - stop: No answer
+      response_variable: err
+set_music_repeat:
+  alias: Set Music Repeat
+  icon: mdi:repeat
+  description: Turn repeat on or off on a speaker. You do NOT need to know the song's
+    name, artist, or anything about what is playing to call this - there is no field
+    for it. It acts on whatever that speaker happens to be playing (or will play next),
+    by device only. Use it for 'repeat this song', 'play this on loop', 'stop repeating',
+    'turn off repeat' - anything that names no new content. Never ask the user what
+    song is playing before calling this; you don't need to know. For 'play X on repeat'
+    where X is newly named content, use search_music then play_music with its repeat
+    field instead - do not call this script for that case.
+  mode: restart
+  fields:
+    mode:
+      name: Mode
+      description: '''one'' to repeat the current track on loop, ''off'' to stop repeating.'
+      required: true
+      selector:
+        select:
+          options:
+          - one
+          - 'off'
+    player:
+      name: Player
+      description: Which speaker to set repeat on. Omit to use the Living Room Speaker.
+      required: false
+      selector:
+        entity:
+          domain: media_player
+          integration: music_assistant
+  sequence:
+  - alias: Resolve target player
+    variables:
+      p: '{{ player | default('''', true) | string }}'
+      matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
+        ''defined'') | list -%}
+
+        {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
+        | list) + (candidates | selectattr(''name'', ''eq'', p) | map(attribute=''entity_id'')
+        | list) -%}
+
+        {%- set ns = namespace(found=(direct | first | default('''', true))) -%}
+
+        {%- if ns.found == '''' and p != '''' -%}
+
+        {%- for c in candidates -%}
+
+        {%- set an = area_name(c.entity_id) -%}
+
+        {%- if ns.found == '''' and an and (an | lower) in (p | lower) -%}
+
+        {%- set ns.found = c.entity_id -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- endif -%}
+
+        {{ ns.found }}'
+      target_player: '{{ matched if matched != '''' else ''media_player.living_room''
+        }}'
+  - alias: Fail loudly if a named speaker did not resolve
+    if:
+    - condition: template
+      value_template: '{{ p != '''' and matched == '''' }}'
+    then:
+    - variables:
+        err:
+          error: No speaker is named '{{ p }}'. Nothing was changed. Retry using one
+            of the exact speaker names listed.
+          valid_speaker_names: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') | map(attribute=''name'') | list }}'
+          valid_rooms: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') | map(attribute=''entity_id'') | map(''area_name'') | select(''string'')
+            | unique | list }}'
+    - stop: Unknown speaker
+      response_variable: err
+  - action: media_player.repeat_set
+    target:
+      entity_id: '{{ target_player }}'
+    data:
+      repeat: '{{ mode }}'
+  - variables:
+      result:
+        repeat: '{{ mode }}'
+        player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
+          true) }}'
+  - stop: Repeat mode set
+    response_variable: result
+ask_general_knowledge:
+  alias: Ask General Knowledge
+  description: Escalates a general-knowledge, current-events, sports-score, or local-happenings
+    question to a more capable research agent with live web search. Call this whenever
+    the request needs up-to-date, specific, or current information you do not already
+    know with certainty - never try to answer these yourself, even if you think you
+    know. Returns the researched answer verbatim; relay it exactly, do not add to
+    or embellish it.
+  icon: mdi:web-search
+  mode: queued
+  sequence:
+  - action: conversation.process
+    data:
+      text: '{{ question }}'
+      agent_id: conversation.anthropic_claude_sonnet_5
+    response_variable: answer
+  - variables:
+      result:
+        answer: '{{ answer.response.speech.plain.speech }}'
+  - stop: Answer ready
+    response_variable: result
+  fields:
+    question:
+      name: Question
+      description: The user's question, exactly as asked, in their own words. Do not
+        paraphrase, shorten, or summarize it.
+      required: true
+      selector:
+        text:

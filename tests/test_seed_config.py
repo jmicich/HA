@@ -67,6 +67,7 @@ def run(*argv):
     "known_devices.yaml",
     ".HA_VERSION",
     ".uuid",
+    ".ha_run.lock",
     "deps/lib/thing.py",
     "backups/full.tar",
     "image/x.png",

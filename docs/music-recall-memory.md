@@ -69,11 +69,30 @@ Tested against a throwaway helper.
 | 40 realistic-length titles | Accepted intact, no truncation |
 | `set_options` accepts a template rendering to a list literal | **Works** — confirmed by the live automation |
 
-**The reload result is the important one.** A reload re-reads from the
-storage collection, so values surviving it means `set_options` persisted to
-`.storage` rather than only mutating memory. A restart reads the same store,
-so restart persistence is near-certain — **but this is an inference, not a
-measurement.** Confirm at the next natural restart.
+**The reload result was misread, and the inference drawn from it was wrong.**
+It said: a reload re-reads from the storage collection, so surviving one
+means `set_options` persisted to `.storage` rather than only mutating memory
+— and therefore a restart is near-certain to be safe.
+
+**Measured 2026-08-20 by reading the files directly, and it does not hold.**
+`.storage/input_select` contains only the authored definition — a single
+placeholder option — and `set_options` never writes back to it. The live
+list survives instead via `.storage/core.restore_state`, which is where both
+recall helpers' full option lists actually sit.
+
+Why this matters, since the conclusion ("it survives") happens to be right
+for the wrong reason:
+
+- **It is state, not config.** Nothing that backs up helper *definitions*
+  will ever capture it — including `scripts/export_ha.py`, which
+  deliberately exports the definition and says so.
+- **`restore_state` is best-effort, not a durable store.** HA writes it
+  periodically and on clean shutdown, so an unclean shutdown can drop the
+  most recent entries. Losing the tail of the recall list degrades matching
+  quietly rather than loudly.
+- The original claim was flagged in this doc as *an inference, not a
+  measurement*, and it was still wrong in a way that would have misled the
+  next person. The measurement was cheap; it should have been made then.
 
 **Two side effects, both acceptable:** the entity's *state* is the selected
 option, so it changes on every write (one recorder row per play, slightly
@@ -108,9 +127,13 @@ had ten playback branches and only one had been end-to-end verified. Moot
 since the 2026-08-19 search/play split collapsed all ten into a single
 playback path, which the regression suite has since exercised repeatedly.
 
-**Cleanup outstanding:** a throwaway test helper was created during
-verification and its deletion was issued during a client-side hang. Confirm
-whether it still exists before assuming it is gone.
+**Cleanup outstanding — confirmed still present 2026-08-20.** The throwaway
+test helper created during verification does still exist; the earlier
+deletion, issued during a client-side hang, never landed. It holds a static
+list untouched since 2026-08-17, nothing references it, and the live
+conversation prompt reads only the real recall helper. It is safe to delete
+and should be, because two near-identically named recall helpers is exactly
+the kind of ambiguity that makes a future audit read the wrong one.
 
 ## Remaining work
 
