@@ -1,9 +1,9 @@
 # Voice & Music — design decisions
 
-Status as of 2026-08-19. Covers the Assist voice stack,
-`script.search_music` + `script.play_music`, and Music Assistant playback.
-Read this before changing the pipelines, the conversation agent's prompt, or
-either script.
+Status as of 2026-08-20. Covers the Assist voice stack, `script.search_music`
++ `script.play_music` + `script.clarify_music_choice` + `script.set_music_repeat`,
+and Music Assistant playback. Read this before changing the pipelines, the
+conversation agent's prompt, or any of the four scripts.
 
 **This doc deliberately records no auditable state.** No entity IDs, speaker
 inventory, room assignments, RINCON identifiers, config hashes, or which
@@ -60,6 +60,27 @@ and, before that, in the model's choice of candidate. Fires the
 response variable. See `music-recall-memory.md` for what consumes that
 event.
 
+**`clarify_music_choice`** — added 2026-08-19 as an attempted fix for defect
+3b (below); **built and mechanically correct, but the model does not
+reliably call it — see "The recall-boost mechanism and its escalation" for
+the full negative result before assuming this tool does anything in
+practice.** Fields: `question` (required), `option_a_uri`/`kind`/`name`/
+`artist` and `option_b_uri`/`kind`/`name`/`artist` (the two candidates to
+choose between; artist optional per option), `player` (optional). Resolves
+the target player exactly like `play_music` (same fail-loud guard, same
+code), then calls `assist_satellite.ask_question` on the house's one voice
+satellite with the two options offered as spoken answer choices, and plays
+whichever the user picked. No answer, or an unmatched answer, returns an
+error response — it never guesses.
+
+**`set_music_repeat`** — added 2026-08-20 for "play/put this on repeat" and
+"stop repeating" requests. Fields: `mode` (required — `one` or `off`),
+`player` (optional). Same player-resolution and fail-loud code as the
+others. Calls the native `media_player.repeat_set` service directly — no
+search, no play, doesn't require anything to already be playing. See
+"Repeat" below for the three entry points this covers and how each is
+routed.
+
 ### Why two scripts
 
 The single-call design could rank candidates but could not *judge* them. A
@@ -93,6 +114,104 @@ way) — search runs in well under a second, play (the real provider network
 call) in 1–2.5s. This is a small sample; see "Regression suite" for how to
 keep collecting it.
 
+### The recall-boost mechanism, and its escalation — built 2026-08-19, six consecutive negative results
+
+Built to fix defect 3b (phonetic/garbled-recall mismatches — see Open
+Defects), after the search/play split fixed 3a but had no effect on this
+half. Both pieces are mechanically verified correct via direct trace
+inspection; **neither changed the model's actual behaviour across six full
+voice-pipeline reps.** Read this before trying to extend either piece —
+the failure is well-characterized, not unexplored.
+
+**Mechanism 1 — recall-aware tagging inside `search_music`.** A new
+`recall_match` variable compares the incoming `query` against every entry
+in the recall list (`music-recall-memory.md`) using a hand-built
+similarity function, and any candidate whose name exactly matches that
+recall entry gets `"note": "matches something recently played"` and is
+sorted to the front of the *entire* candidate list (not just its own
+type-group — an earlier version only re-ranked within type, which left the
+correct candidate buried behind every track candidate; fixed the same day
+once caught).
+
+**The similarity function itself needed two real fixes before it worked at
+all — tested empirically via `ha_eval_template`, not assumed:**
+1. **Bigram (2-character n-gram) Dice similarity was tried first and is
+   the wrong tool for this case.** It's order-sensitive, and "Roomers" →
+   "Rumours" is a letter *transposition*, not a substring match — measured
+   score 0.167, statistically indistinguishable from an unrelated word
+   ("Roomers"/"Yesterday" scored 0.143). Don't reach for bigram similarity
+   for phonetic-style mishearings; it's built for a different kind of
+   textual closeness.
+2. **Character-multiset (order-insensitive) Dice similarity works, but
+   only after fixing a real bug:** Jinja's `reject('eq', ch)` removes
+   *every* occurrence of a repeated character, not one — so comparing a
+   string against itself undercounted whenever a letter repeated
+   (`cdice('Rumours','Rumours')` returned 0.71, not 1.0, until the loop was
+   rewritten to remove exactly one match per iteration). After the fix,
+   self-comparison is a clean 1.0 — but the *margin* between a true match
+   and a near-miss is uncomfortably thin for a threshold-based decision:
+   "Rumors" (a different real track, missing one letter) scored 0.92
+   against "Rumours" — nearly as high as an exact match, and higher than
+   the genuine target ("Roomers" itself scored 0.71). **This is why the
+   final design uses fuzzy matching only for the outer query→recall-list
+   check (deciding *whether* a recall connection might exist at all,
+   threshold 0.5), and exact string matching (case/whitespace-normalized)
+   for the inner candidate→recall-match check** — by that second stage the
+   correct title is already known verbatim, so there's no more garbling
+   left to compensate for, and a fuzzy re-check there just reopens the
+   near-miss risk for no benefit.
+
+**Mechanism 2 — `clarify_music_choice`, an escalation tool.** When the
+model would pick something other than a noted candidate, the tool
+description instructs it to call this instead of deciding itself. Built on
+`assist_satellite.ask_question` (added to HA in 2025; response shape is
+`{id, sentence, slots}`, `id` empty on no match). Two things worth knowing
+before touching this action:
+- **HA's per-action `timeout:`/`continue_on_timeout:` keys only exist on
+  `wait_for_trigger`/`wait_template`** — confirmed by a hard rejection
+  (`extra keys not allowed`) when tried on a plain service-call step, not
+  assumed. There is no native way to bound an arbitrary action's runtime.
+- **`ask_question` has documented GitHub issues describing indefinite
+  hangs** — but only in multi-call-in-one-script or repeat-loop contexts.
+  A single standalone call, tested directly with nobody answering, returned
+  promptly with `id: null` rather than hanging. This script only ever
+  makes one such call per run, by design, specifically to stay clear of
+  the reported failure mode. Not proof it can never hang — just the one
+  pattern actually exercised here.
+
+**The six reps, in order, all on the exact same case ("Roomers" → should
+resolve to "Rumours" by Fleetwood Mac):**
+
+| # | What was live at the time | Result |
+| --- | --- | --- |
+| 1–2 | No recall mechanism yet (baseline, pre-dates this section) | Wrong track, both times |
+| 3 | Tagging built, but only re-ranked *within* type — bug, not yet caught | Same wrong track (tag never reached top of list) |
+| 4 | Global re-ranking fixed; tag correctly at position 1 of 12, verified via trace | Same wrong track *again* — first hint this isn't ranking |
+| 5 | `clarify_music_choice` built and exposed; tool description explicitly instructs escalating on a note conflict | Model didn't call the escalation tool at all — picked a *different* wrong candidate directly (the "Roomers" **playlist**, not the track — its first queued song, "HeadBand," is unrelated content and not a new bug in itself) |
+| 6 | Same as #5, conversation agent's model switched to `anthropic/claude-sonnet-5` | Identical wrong pick to #5, ~14s judgment latency vs ~1–2s on Haiku — no accuracy gain for a real latency cost |
+
+**Conclusion, stated precisely rather than as "the model ignores hints":**
+across every mechanism tried — a per-candidate tag, moving that candidate
+to the literal front of the list, an explicit tool-description instruction
+to escalate on conflict, and a stronger model tier — a bare, short,
+no-artist, no-type-cue query resolves to the first literal text match every
+time. The signal isn't being weighed *against* anything; it doesn't appear
+to be entering the decision at all for this request shape. That's a
+narrower, more falsifiable claim than "prompt adherence is bad," and it's
+what any future attempt at 3b needs to either explain or route around —
+see Open Defects 3b for what's still untried.
+
+**Operational hazard while testing this:** every wrong pick logs its own
+(wrong) title into the recall list via the existing `music_played` event —
+the self-reinforcement trap `music-recall-memory.md` already documents.
+During this investigation that meant "Roomers" itself repeatedly
+re-entered the recall list from the *test's own* failures, at one point
+briefly outscoring "Rumours" as the query's best recall match (self-match
+= 1.0) and invalidating that rep. **Read the recall list's current state
+immediately before every single rep of this case, not just once before the
+run** — a rep that looks like a fresh test can silently be measuring
+contaminated data.
+
 ### Resolution order (inside search_music)
 
 Explicit (when `media_type` is set):
@@ -111,6 +230,72 @@ Fallback (when `media_type` is unset, i.e. a genre or mood):
 Within each type, when `artist` is given, candidates naming that artist are
 offered first; provider order (library → Spotify → Apple Music) breaks ties
 either way.
+
+## Repeat
+
+Added 2026-08-20, covering three entry points: naming content and asking
+for it on repeat, putting whatever's already playing on repeat, and turning
+repeat back off. All three verified working end to end via the real voice
+pipeline, not just direct script calls.
+
+**The capability already existed natively — this was a wiring gap, not a
+missing feature.** `media_player.repeat_set` (modes `off`/`all`/`one`) is a
+core HA service, and the house's MA-owned speakers confirmed support for it
+(checked the `supported_features` bitmask directly — bit `262144`,
+`REPEAT_SET`, is present). Before this, nothing routed a repeat request
+anywhere: tested empirically, "put this song on repeat" hit no tool at all
+and the model asked "which song?", because nothing told it repeat was a
+concept it could act on, or that "this" means whatever's already playing.
+
+**Routing, three ways:**
+- **"Play X on repeat"** — content is named, so this stays inside the
+  existing `search_music` → `play_music` flow. `play_music` gained an
+  optional `repeat` boolean field; when true, it calls
+  `media_player.repeat_set(mode='one')` on the target player right after
+  `music_assistant.play_media` succeeds, before returning. No extra tool
+  call, no extra LLM round-trip.
+- **"Put this on repeat" / "stop repeating"** — no new content named, same
+  shape as the native pause/resume commands, except HA has no built-in
+  intent for repeat. Routes to the new `set_music_repeat` script, which
+  only sets the mode — it never searches or plays, and doesn't require
+  anything to already be playing.
+- All three verified via player state (`repeat` attribute), not the spoken
+  reply: "play X on repeat" starts the right item with `repeat: "one"` in
+  one call; "put this on repeat" flips an already-playing item's mode
+  without interrupting playback (position kept advancing through the
+  change); "turn off repeat" clears it the same way.
+
+**Decision, explicit:** "put this on repeat" sets the mode unconditionally,
+even if nothing is currently playing on the target player — it doesn't
+check player state first or refuse when idle. Chosen deliberately: harmless
+either way, and matches how someone might reasonably say it just before
+pressing play.
+
+**`set_music_repeat`'s tool description needed a specific, non-obvious
+correction before the model would call it at all.** The first version said
+what the script does but not what it *doesn't need* — the model twice
+declined to call it and asked "which song is playing?" for a tool that has
+no song field and doesn't care. Fixed by stating the negative explicitly:
+"You do NOT need to know the song's name... there is no field for it...
+Never ask the user what song is playing before calling this." Necessary
+because the model was reasoning as if all music-related actions require
+identifying the content, generalizing from `search_music`/`play_music`'s
+actual requirement to a tool that has no such requirement. A lesson beyond
+this one script: when a new music tool doesn't need something every other
+music tool needs, say so, don't assume the absence of a field is enough
+signal on its own.
+
+**Defect #4 (player hallucination, still open — see Open Defects)
+reproduced immediately in the new tool, unprompted, during this feature's
+own verification.** A bare "put this song on repeat" (no room named) had
+the model guess `player: "Sonos"` (invalid, correctly fail-loud rejected),
+then retry with `player: "Sonos 2"` — copied verbatim from the guard's own
+error text — landing on a real but wrong speaker instead of omitting the
+field for the documented Living Room default. Not a bug introduced by this
+feature; the exact same shape already documented for `play_music`. Left as
+further evidence for defect #4's open root cause, not something fixed
+here — retesting with the room named explicitly worked correctly and is
+the verified path.
 
 ## Traps, with evidence
 
@@ -238,6 +423,62 @@ earn; this is the model claiming failure it didn't have. Same rule, verify
 state either way, but worth naming explicitly since a false failure report
 could send someone chasing a bug that isn't there.
 
+**Root cause found and partially fixed, 2026-08-20 — the scripts never told
+the model which speaker they actually used.** The repeat feature's own
+testing surfaced the sharpest instance yet: "put this song on repeat in the
+living room" got the reply *"Repeat is on. Yesterday will loop"* while
+`media_player.repeat_set` had actually landed on a different speaker
+entirely, playing a different leftover song. Checked, not assumed:
+`play_music`, `set_music_repeat`, and `clarify_music_choice`'s `result`
+payloads carried `played`/`kind`/`repeat` but never which player was
+targeted — so even a model trying to report accurately had no real data to
+ground a room claim on, and could only ever be echoing what the *user*
+asked for, not what the tool *did*. A prompt instruction alone cannot fix
+that; there was nothing true for it to say.
+
+**Fix: added `player` (resolved friendly name) to all three scripts'
+`result`, plus a prompt instruction to ground every reported fact — song,
+repeat state, and room — strictly in the tool's returned fields, explicitly
+never in what the user asked for or what was called with.** Verified across
+3 live reps of the exact repro shape (bare "put this song on repeat," no
+room named — the phrasing already known to trigger defect #4's
+player-resolution flakiness): 2/3 resolved correctly and the reply now
+explicitly names the actual player from the response ("Repeat is on for
+the Living Room Speaker" — it previously never named a room at all in the
+success case, and named the wrong one in the failure case above). The
+third rep asked which speaker rather than guessing — a safe abstention, not
+a regression, but also not a reproduction of the original bug shape. **Not
+fully closed:** three reps didn't happen to catch defect #4 actually
+landing on a wrong player this round, so the fix is verified for the
+"tool succeeded, is the reply honest about it" case, but not yet
+re-confirmed for the original "tool landed on the wrong player, does the
+reply admit it" case specifically — worth catching that combination
+specifically next time it's tested, rather than assuming the fix covers it
+by extension.
+
+**A structural fix was investigated and ruled out, confirmed empirically,
+not assumed.** `set_conversation_response` — the native HA action that lets
+a script dictate the exact spoken reply — has no effect on this pipeline.
+Tested directly: added it to `set_music_repeat` with a distinctive marker
+string, called the script through the real voice pipeline, and the actual
+spoken reply was the LLM's own paraphrase ("Repeat is now off in the living
+room"), not the marker text. This makes sense once traced through: our
+music tools are called by an LLM *function-calling* agent
+(`llm_hass_api: assist`), which always synthesizes its own final reply from
+tool-result data as one more step after the tool call returns — it never
+adopts a tool's response as the final utterance verbatim. `set_conversation_response`
+only takes effect for HA's native/local intent-triggered conversation
+flow, where the script *is* the entire response mechanism and there's no
+LLM paraphrasing step to override. **No known mechanism in this stack lets
+a script force its own wording into the spoken reply when called as an LLM
+tool.** The prompt-level grounding fix above (return the real data, instruct
+the model to use only that data) is therefore the ceiling of what's
+achievable here, not a stopgap on the way to something stronger — reflect
+that before promising a fully deterministic reply is possible without
+changing the architecture (e.g. dropping to a local hassil-matched intent
+for these specific commands, which is a materially bigger change and has
+its own documented risk — see "Deliberately not done").
+
 **Having the right answer in context does not mean the model uses it.** The
 "Roomers" → "Rumours" mangled-recall case fails even when the correct title
 is present *twice over* — once as a `search_music` candidate correctly
@@ -303,10 +544,22 @@ model or prompt changes, separately from correctness.
 | Pause, no target | |
 | Pause, with target | |
 | Resume, with target | |
+| Repeat, new content | "play [song] on repeat" — must both play the right song AND set `repeat: "one"` in the same request |
+| Repeat, current, no target | "put this song on repeat" / "repeat this" — no room named; this is the exact phrasing that triggered defect #4 during this feature's own verification, see "Repeat" above |
+| Repeat, remove | "stop repeating" / "turn off repeat" |
 | Mangled recall | garbled version of a previously played item → maps to it |
 | Novel request | absent from the recall list → treated as new, **must not** bend |
 
 The last two exist because of the recall list; see `music-recall-memory.md`.
+
+**Repeat cases verify via the player's `repeat` attribute, not the spoken
+reply** — same rule as everywhere else in this doc, and specifically
+important here since the reply already misreported the target device once
+during this feature's initial verification (see "Repeat" above). "Repeat,
+current, no target" is deliberately the bare, no-room phrasing precisely
+because that's what surfaced defect #4 in this tool; a phrasing that
+already names a room will not exercise that path and isn't a substitute
+for this case.
 
 **Before running:** audit the speaker inventory and room assignments first.
 Three cases depend on which rooms have speakers, and an empty room that is
@@ -344,19 +597,33 @@ and single-run tests cannot distinguish "broken" from "unlucky".
    → the Beatles, not the same-titled Lil Peep track, Daniel Leggs album,
    or Toosii album).
 
-   **3b. Phonetic or garbled-transcription mismatches — still open, and
-   confirmed deterministic, not probabilistic.** The mangled-recall case
-   ("Roomers" → should resolve to "Rumours") failed 0/3 in the 2026-08-19
-   suite run, the same wrong way each time, *even with the correct answer
-   present twice over* — once as a properly-artist-tagged `search_music`
-   candidate, once by name in the recall-list prompt hint. See the new trap
-   above ("Having the right answer in context does not mean the model uses
-   it"). Model judgment does not generalize to this case the way it did to
-   3a — the failure isn't a missing signal, it's that literal text
-   similarity outweighs a correct hint already in context. No fix identified
-   yet; this needs either a stronger prompt treatment specifically for
-   phonetic mismatches, or a different mechanism entirely (e.g. resolving
-   against the recall list *before* search, not just hinting during it).
+   **3b. Phonetic or garbled-transcription mismatches — still open, now
+   backed by six consecutive negative reps, not just three.** The
+   mangled-recall case ("Roomers" → should resolve to "Rumours") has never
+   once resolved correctly across every mechanism tried: recall-list
+   prompt hint alone, a per-candidate structural tag, that tag moved to the
+   literal front of the full candidate list, an explicit tool-description
+   instruction to escalate to a clarifying question on conflict, and a
+   stronger model tier (Sonnet 5, reverted — no accuracy gain, ~10x the
+   judgment latency). Full mechanism detail, the two fixed bugs in the
+   similarity function, and the rep-by-rep table are in "The recall-boost
+   mechanism, and its escalation" above — read that before attempting
+   another fix here, since it rules out several approaches that look
+   promising but have already been tried. **Precise characterization:** a
+   bare, short, no-artist, no-type-cue query resolves to the first literal
+   text match regardless of what other signal is available or how
+   prominently it's presented — the auxiliary signal doesn't appear to
+   enter the decision at all for this request shape, rather than being
+   weighed and losing. Untried: routing the recall check entirely outside
+   the model's judgment (deterministic query rewrite before search, which
+   was the original idea but was deliberately tempered down to a safer
+   tag-only approach after a false-positive risk was found in the
+   similarity function — revisit the rewrite approach now that the safer
+   one has been shown not to work either); a different model provider
+   entirely, not just a different Anthropic tier; or accepting this as a
+   permanent limitation of prompt-mediated resolution and building a
+   deterministic override specifically for exact recall-list matches that
+   bypasses model judgment entirely for this one case.
 
    **3c. Nonsense queries fuzzy-matching to real content — still open,
    still probabilistic.** Unchanged by the redesign: passed cleanly with a
@@ -405,6 +672,13 @@ rate-limit hang. Artist intent must resolve via playlist/album.
    `search_music` candidate across the retry. The split didn't change this
    defect's shape or its mitigation; the fail-loud guard lives entirely in
    `play_music`, unchanged.
+
+   **Reproduced a third time, same shape, in `set_music_repeat`'s own
+   verification (2026-08-20)** — see "Repeat" above. Confirms this is a
+   property of the model's general player-resolution behavior, not
+   something specific to `play_music`; any new script reusing the same
+   resolve-player code should expect the same failure mode and the same
+   fail-loud mitigation, not a fresh one.
 
 5. **A room with more than one speaker makes "resume" with a room-only
    target ambiguous, and it fails rather than guessing.** Observed 0/2 in
@@ -482,7 +756,16 @@ Regenerate everything this doc no longer states:
   state machine
 - **Which agent and wake word each pipeline uses** — `ha_manage_pipeline`
 - **Current script bodies and `config_hash`** — `ha_config_get_script` for
-  both `search_music` and `play_music`, read immediately before any write
+  `search_music`, `play_music`, `clarify_music_choice`, and
+  `set_music_repeat`, read immediately before any write
+- **Which model the conversation agent is currently using** — the
+  OpenRouter conversation subentry's `model` field
+  (`ha_get_integration(entry_id=..., include_subentries=true)` then
+  inspect the subentry; the subentry's display title is not reliably kept
+  in sync with the model field — confirmed stale once already, don't trust
+  it). As of 2026-08-19 this should read `anthropic/claude-haiku-4.5` — a
+  Sonnet 5 experiment was tried and reverted, see "The recall-boost
+  mechanism" above.
 - **MA config entry ID** (needed as a literal in service calls) —
   `ha_get_integration(query="music assistant")`
 - **Provider errors, rate limits, playback locks** — the MA add-on log;

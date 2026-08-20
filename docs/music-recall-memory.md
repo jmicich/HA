@@ -158,28 +158,36 @@ important result here.
 | Case | Result |
 | --- | --- |
 | "Take 5" → "Take Five" | **Fixed.** Textually close — one common digit/spelled-number substitution. Model reliably substitutes the canonical title, verified via trace. |
-| "Roomers" → "Rumours" | **Still fails, deterministically (0/3, 2026-08-19).** Phonetically close but textually different once transcribed. Fails the same way every time, not intermittently — see the trap in `voice-and-music.md` ("Having the right answer in context does not mean the model uses it"). The correct title was present in the recall list *and* independently in `search_music`'s own candidates on every attempt; the model still picked the literal-text match ("Roomers", a real playlist). |
+| "Roomers" → "Rumours" | **Still fails — 0/6 across every mechanism tried as of 2026-08-19, deterministically, not intermittently.** See `voice-and-music.md`, "The recall-boost mechanism, and its escalation," for the full rep-by-rep history: a structural per-candidate tag, that tag moved to the literal front of the whole candidate list, an explicit escalate-instead-of-guessing tool instruction, and a stronger model tier were all tried in addition to this prompt hint, and none changed the outcome. |
 
-**The pattern is textual distance, and it did not move when the pipeline
-changed underneath it.** The block closes an easy substitution gap but not
-a phonetic-only one — and giving the model a second, independent path to
-the same correct answer (real search candidates, correctly artist-tagged)
-didn't close it either. This looks less like "not enough signal" and more
-like literal text similarity dominating regardless of how much correct
-signal sits alongside it. No fix identified; flagged as open in
-`voice-and-music.md` defect 3b.
+**The pattern is textual distance, and nothing tried has moved it.** The
+block closes an easy substitution gap but not a phonetic-only one. This
+looks less like "not enough signal" and more like literal text similarity
+dominating regardless of how much correct signal is available or how
+prominently it's surfaced — auxiliary signal doesn't appear to enter the
+decision at all for this request shape. No fix identified after six
+attempts on different mechanisms; flagged as open in `voice-and-music.md`
+defect 3b, which also lists what's genuinely still untried (a
+deterministic query rewrite bypassing model judgment entirely, or a
+different model provider rather than a different tier of the same one).
 
 ### Self-reinforcement trap
 
 A wrong resolution that gets logged into the recall list becomes a future
-exact-match target for the same wrong request — confirmed directly: an
-earlier failed "Roomers" test logged "Roomers" itself into the recall list,
-which then out-competed the correct "Rumours" entry on the next attempt
-purely because it was an exact string match. **A wrong resolution is not
-self-correcting; it's self-reinforcing.** The list needs occasional manual
-cleaning of known-wrong entries — there is no automatic mechanism to detect
-or evict one. Nothing currently prevents this recurring on a genuinely new
-wrong resolution, not just the "Roomers" one already seen twice.
+exact-match target for the same wrong request — confirmed directly, more
+than twice: across the six-rep "Roomers" investigation
+(`voice-and-music.md`), the list had to be manually cleaned before *every
+single rep*, because each failed attempt logged "Roomers" itself back into
+the list via the normal `music_played` event, and at least once it briefly
+out-scored the correct "Rumours" entry as the query's best fuzzy match
+purely by being an exact string. **A wrong resolution is not
+self-correcting; it's self-reinforcing, and it will keep contaminating
+whatever fuzzy-matching mechanism reads the list next.** There is no
+automatic mechanism to detect or evict a bad entry. **Practical
+consequence for anyone testing this list's behavior:** verify the list's
+actual current content immediately before every rep, not once before a
+whole test run — a rep that looks clean can silently be measuring
+contaminated data from the previous rep's own failure.
 
 ## Known design gap: no artist in the payload — closed 2026-08-19
 
