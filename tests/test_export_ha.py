@@ -82,9 +82,11 @@ def live(tmp_path):
         },
     ]})
 
+    # The authored definition, which is all this file ever holds: a helper
+    # driven by set_options keeps its live contents in core.restore_state.
     write_storage(root, "input_select", {"items": [
         {"id": "music_recall", "name": "Music Recall", "icon": "mdi:history",
-         "options": ["Song A", "Song B", "Song C"]},
+         "options": ["(none)"]},
     ]})
 
     write_storage(root, "assist_pipeline.pipelines", {
@@ -217,12 +219,18 @@ def test_volatile_timestamps_are_dropped(live):
     assert "modified_at" not in entry
 
 
-def test_input_select_values_are_excluded_but_counted(live):
+def test_input_select_definition_is_exported_verbatim(live):
+    """The stored `options` are the configured list, not live state.
+
+    `set_options` never writes back to this file, so a helper used as a
+    runtime buffer still reads as its authored placeholder here — which is
+    exactly what belongs in git, and produces no churn.
+    """
     doc = yaml.safe_load(export_ha.render(live)["helpers.yaml"])
     item = doc["input_select"][0]
-    assert "options" not in item
-    assert item["options_count"] == 3
     assert item["name"] == "Music Recall"
+    assert item["options"] == ["(none)"]
+    assert item["icon"] == "mdi:history"
 
 
 def test_export_is_deterministic(live):

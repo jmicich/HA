@@ -21,14 +21,14 @@ secret-free subset. Extraction rather than copying is the whole point.
 nothing else, and the output lives outside it deliberately so a deploy can
 never pick it up. Restoring from these files is a manual operation today.
 
-Two deliberate omissions, both to keep diffs meaningful:
+What is deliberately dropped: `created_at` / `modified_at` timestamps, which
+churn on every HA write and say nothing about what the config *is*.
 
-  * `created_at` / `modified_at` timestamps churn on every HA write and say
-    nothing about what the config *is*.
-  * `input_select` option *values* are excluded. The only ones here are
-    runtime buffers (the music recall list rewrites itself on every play),
-    so committing them would bury real changes under song titles. The
-    definition is kept; the values live in HA's own snapshots.
+What is deliberately *not* covered: entity state. A helper driven at runtime
+(`input_select.set_options`, say) keeps its live contents in
+`core.restore_state`, not in its own definition file, so what is exported
+here is the authored config and nothing more. State belongs to HA's
+snapshots.
 
 Review the diff before committing. Redaction is a backstop, not a substitute
 for reading what you are about to commit.
@@ -167,15 +167,18 @@ def export_conversation_agents(source: Path):
 
 
 def export_helpers(source: Path):
-    """input_select definitions, without their runtime option values."""
+    """input_select definitions, exactly as authored.
+
+    `options` here is the *configured* list and is safe to export verbatim:
+    `input_select.set_options` does not write back to this file. A helper used
+    as a runtime buffer therefore still reads as its original placeholder, and
+    produces no diff churn. Its live contents are state, held in
+    `core.restore_state` and covered by HA's own snapshots, not by this.
+    """
     data = load_storage(source, "input_select")
     if not data:
         return None
-    items = []
-    for item in data.get("items", []):
-        kept = {k: v for k, v in item.items() if k != "options"}
-        kept["options_count"] = len(item.get("options") or [])
-        items.append(scrub(kept))
+    items = [scrub(item) for item in data.get("items", [])]
     return {"input_select": sorted(items, key=lambda i: i.get("id", ""))} if items else None
 
 

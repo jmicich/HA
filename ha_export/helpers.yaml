@@ -6,8 +6,10 @@ input_select:
 - icon: mdi:music-note-eighth
   id: music_recall
   name: Music Recall
-  options_count: 1
+  options:
+  - (none)
 - icon: mdi:music-note-eighth
   id: music_recall_test
   name: Music Recall Test
-  options_count: 1
+  options:
+  - placeholder
