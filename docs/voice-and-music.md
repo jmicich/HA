@@ -456,6 +456,23 @@ reply admit it" case specifically — worth catching that combination
 specifically next time it's tested, rather than assuming the fix covers it
 by extension.
 
+**Now closed, 2026-08-21 — the combination finally landed.** The suite run
+of that date caught the exact pairing this paragraph asked for: rep 3 of
+"play Fleetwood Mac in the living room" resolved to the Dining Room speaker,
+and the reply said *"Now playing Fleetwood Mac Radio on the Sonos."* The
+routing was wrong and **the reply was honest about it** — it named the
+speaker the tool actually returned rather than echoing the room the user
+asked for. Compare the pre-fix failure, where the same wrong-player
+situation was reported as the *right* room. The grounding fix therefore
+holds in the case it had never been observed in: it does not prevent
+mis-routing, but it stops mis-routing from being reported as success.
+
+Worth stating what that means practically: **the wrong-room bug is now
+audible.** A listener hears the assistant name a room they didn't ask for,
+which is a recoverable failure. That is the ceiling this architecture
+allows — see the `set_conversation_response` finding below for why a
+deterministic reply is not available.
+
 **A structural fix was investigated and ruled out, confirmed empirically,
 not assumed.** `set_conversation_response` — the native HA action that lets
 a script dictate the exact spoken reply — has no effect on this pipeline.
@@ -613,6 +630,46 @@ Two things worth carrying forward:
   closer to what "repeat *this*" means and removes this tool's exposure to
   defect #4 — but it was not what fixed the bug.
 
+### Run of 2026-08-21 — after the tier-1 prompt slimming and cache migration
+
+Run against the migrated tier-1 agent. **Partial: the fragile and
+defect-prone cases got the mandated three reps, the settled happy paths got
+one.** Recorded honestly rather than presented as a full pass, since a
+one-rep result on a probabilistic suite proves nothing — the defect below
+was caught *only* on the third rep.
+
+| Case | Reps | Result |
+| --- | --- | --- |
+| Room with a speaker | 3 | ❌ **2 pass, 1 wrong room** — see defect #4 |
+| Room with no speaker | 3 | ✅ refused, listed real alternatives, no stray playback |
+| Nonsense query | 3 | ✅ abstained, nothing played (new fixture — see 3c) |
+| Repeat on, no target | 3 | ✅ three phrasings, `repeat: one`, correct player |
+| Repeat off | 3 | ✅ three phrasings |
+| Song, no artist | 1 | ✅ Take Five / Brubeck, defaulted to Living Room |
+| Album + named device | 1 | ✅ started at track 1 of *Rumours* |
+| Genre | 1 | ✅ resolved to a Smooth Jazz playlist |
+| Garbled transcription | 1 | ✅ "flitwood mack" → Fleetwood Mac, self-corrected via a second search |
+| Recall, descriptive | 1 | ✅ "that jazz thing I had on earlier" → Smooth Jazz Chill |
+| Pause / resume, no target | 1 each | ✅ position preserved across the pair |
+
+**Not run:** playlist-by-name, mangled recall ("Roomers" → "Rumours", known
+open at 3b), novel/out-of-scope requests, and second/third reps of
+everything in the one-rep block. The one-rep passes are evidence the case
+is not *always* broken; they are not evidence it is reliable.
+
+**The repeat regression from prompt slimming is genuinely fixed** — 3/3 in
+both directions across three distinct phrasings ("put this on repeat", "put
+this song on loop", "keep playing this over and over"), each resolving the
+player without asking. That was 1/3 immediately after the slim, so the
+restored phrase list is doing real work; see the slimming section above.
+
+**Unexplained anomaly worth watching: `script.play_music` fired twice** on
+three of the plays (the second firing 1–2s after the first, `mode: restart`
+so the first is cancelled). Outcome was correct every time, and `restart`
+mode is why. Not diagnosed — noted here so a future investigation into
+duplicate queue entries or wasted `music_assistant.search` calls against the
+rate limit starts with a known prior rather than treating it as new.
+
 ### This suite is invalidated by tier-1 prompt changes that look unrelated
 
 The tier-1 agent both routes music *and* decides when to escalate a general
@@ -637,6 +694,17 @@ things worth recording:
   `music-recall-memory.md` biting a *test* rather than a user. **Clean the
   recall list immediately before this case, every time** — a prior run's
   failure silently becomes this run's input.
+
+  **Partially retracted, 2026-08-21.** The hygiene rule above stands and is
+  worth keeping. The specific diagnosis was wrong: the word in question
+  ("Flibbertigibbet") is a real song, so it entered the recall list by
+  playing correctly, not by failing. The case was mis-scored as a failure
+  because the fixture was never a nonsense string in the first place — see
+  Open Defects 3c. Two separate mistakes stacked here, and only the second
+  was real: an unverified assumption about the fixture, then a contamination
+  story invented to explain the resulting "failure". **Check that a nonsense
+  fixture is actually absent from the catalogue before blaming the harness
+  for matching it.**
 
 **Repeat cases verify via the player's `repeat` attribute, not the spoken
 reply** — same rule as everywhere else in this doc, and specifically
@@ -723,6 +791,25 @@ and single-run tests cannot distinguish "broken" from "unlucky".
    over-matching; it only makes a bad match visible in the reply instead of
    silently confirmed.
 
+   **Passed 3/3 on 2026-08-21 — and the run invalidated the old test
+   fixture.** "Flibbertigibbet", used previously as the nonsense string, is
+   **a real song** — by Juli Lee, on the album *Overrated*. Searching it
+   returns a genuine match, and playing it is correct behaviour, not
+   over-matching. An earlier session had recorded its appearance in the
+   recall list as contamination and "cleaned" it; that cleanup was removing
+   a correct entry. The lesson is the ordinary one for this project: the
+   assumption that a funny-sounding word is not a real title was never
+   checked against the catalogue.
+
+   Replaced with `Zqxjvwm Blarghenshpiel`, which is orthographically
+   implausible in English rather than merely unusual. Three reps all
+   abstained cleanly — searched, rejected the returned candidates, played
+   nothing ("I couldn't find anything matching... That doesn't appear to be
+   a real artist or song"). **This does not close 3c**: an abstention on a
+   string with no plausible near-match is the easy half. The open half is a
+   nonsense string that *does* overlap real content, which is the case that
+   failed before and was not re-tested here.
+
 **Earlier fix that caused a regression:** adding `media_type` initially
 routed artist intent straight to a streaming artist URI, reintroducing the
 rate-limit hang. Artist intent must resolve via playlist/album.
@@ -765,6 +852,39 @@ rate-limit hang. Artist intent must resolve via playlist/album.
    something specific to `play_music`; any new script reusing the same
    resolve-player code should expect the same failure mode and the same
    fail-loud mitigation, not a fresh one.
+
+   **A fourth reproduction, 2026-08-21, and it is a different shape that
+   the existing mitigation cannot catch.** "Play Fleetwood Mac in the living
+   room", run three times identically: reps 1 and 2 played on the Living
+   Room Speaker; rep 3 played on **Sonos 2, which is in the Dining Room**.
+
+   Every previous instance of this defect involved the model inventing a
+   speaker name that *does not exist*, which the unknown-speaker guard
+   refuses in ~2ms. This one is categorically different: **"Sonos 2" is a
+   real, valid, correctly-named speaker.** The guard validates that a name
+   resolves to a real player; it has no notion of whether that player is in
+   the room the user named. So the request passed validation and played in
+   the wrong room, and no amount of hardening the fail-loud guard would
+   have stopped it — the guard was working exactly as designed.
+
+   **This moves the defect from "model invents targets" to "model
+   substitutes a valid wrong target for an explicitly named room", which is
+   the more serious form** — it is silent at the validation layer, and the
+   only thing that surfaces it is the grounded reply naming the speaker
+   (see "Repeat" above, where this same run closed that question).
+
+   **Probabilistic at roughly 1-in-3 on this phrasing.** A single rep shows
+   green; this is precisely why the suite mandates three. Do not conclude
+   from one clean run that it is fixed.
+
+   **The structural fix this points at, not yet built:** `play_music`
+   resolves a *room* to its speakers today only when `player` is omitted. If
+   the model supplies a `player` while the utterance also names a room, the
+   script has no cross-check. Validating a supplied `player` against the
+   named room — and refusing or correcting on mismatch — would make this
+   failure structurally impossible rather than probabilistically rare, which
+   is the standard defect #1 above already argues for. That requires the
+   room to reach the script, which it currently does not.
 
 5. **A room with more than one speaker makes "resume" with a room-only
    target ambiguous, and it fails rather than guessing.** Observed 0/2 in
