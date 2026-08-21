@@ -38,6 +38,7 @@ script's service call, and are not quoted here.
 | Decision | Reason |
 | --- | --- |
 | Tier-2 is a separate subentry, not a bigger tier-1 | `voice-and-music.md` already measured a stronger model as tier-1: no accuracy gain, ~10x judgment latency. Escalating only when needed keeps that cost off every music command. |
+| **Both tiers run the same cheap model** | Tier 2 was originally given a stronger model to fix a hallucination that turned out not to exist (see the trap below). Profiling later confirmed the stronger model is slower and no more accurate here — see "Model profiling". The split earns its keep on *architecture*, not on model tier. |
 | Tier-2 gets **no** `llm_hass_api` | It is a research agent. Giving it house tools would let a second model act on the home with no supervision, and doubles the surface where a wrong device call can originate. |
 | Tier-1's own `web_search` is off | Two search paths would make it ambiguous which one produced an answer, and tier-1 would sometimes answer directly, bypassing the grounding rules written into tier-2's prompt. |
 | Script-as-tool | The only mechanism for tier-1 → tier-2 (there is no native one), and the pattern is already proven by the music scripts. |
@@ -90,6 +91,106 @@ that did not exist.
 **Rule going forward:** verify a factual answer with a *narrow, dated*
 search run at the time of testing. Never against recollection.
 
+## Model profiling
+
+Four configurations, same five questions each, timed from the escalation
+script's own `on`→`off` transitions in the recorder. Absolute numbers will
+drift; the **shape** of the result is the durable part.
+
+| Config | Tier-2 model | Mean | Spread |
+| --- | --- | --- | --- |
+| A | a frontier-tier model | 8.2s | 5.5–10.1s |
+| B | the same cheap model as tier 1 | 5.9s | 4.2–7.7s |
+| C | a fast third-party flash model | 3.9s | 3.2–4.4s |
+| D | **no tier 2** — one agent with search | 7.9s | single sample |
+
+**D is the important row, and it is the counterintuitive one.** Removing the
+escalation hop entirely — the obvious way to cut two model calls — came out
+*slower* than keeping it, and cost more per question. The search round trip
+happens inside tier 1's context, which balloons past 18k input tokens once
+results come back. One call over a huge prompt loses to three calls over
+small ones.
+
+**So the hop was never the bottleneck. Prompt size is.** Tier 1 sends
+roughly 7k tokens on every utterance in the house, music included, and an
+escalated question pays that twice. Against that, tier 2's own model is
+noise: in config C its share of the per-question cost was about 4%.
+
+Shrinking tier 1's prompt is therefore the only remaining lever with real
+leverage, and it improves every interaction, not just this feature.
+
+### Prompt caching would beat shrinking, and is not available to us
+
+The obvious better answer is not to shrink the prompt but to stop paying for
+it: tier 1 sends a near-identical multi-thousand-token prefix on every single
+utterance. Cached input costs a fraction of fresh input and prefills faster.
+
+**Measured cache hit rate: 0.0%**, across hundreds of requests. The reason is
+upstream, not configuration — Home Assistant's `open_router` integration
+builds its request with `extra_body` carrying only `require_parameters` and
+tools, and sets no `cache_control` anywhere. The provider supports caching;
+the integration never asks for it.
+
+So this is not a knob we own *on this integration*. Two dead ends worth
+recording so they are not re-explored: provider-side presets cannot supply
+it either, because `cache_control` is a per-message annotation rather than a
+request parameter, and the integration's model field is a validated
+dropdown that will not accept a preset reference.
+
+**But Home Assistant's own `anthropic` integration supports it directly**,
+and has since before this was built. It sets `cache_control` on the system
+block, exposes caching as a configuration option with `off` / `prompt` /
+`automatic` modes, and **defaults to `prompt` — caching on**. It also
+carries several things the OpenRouter subentry does not expose at all: a
+`max_tokens` control, and a web-search option with structured location
+settings (city, region, country, timezone) that would replace the
+coordinates-in-the-prompt workaround described above.
+
+That makes the caching gap a **migration decision, not an upstream wait**.
+The trade is real and runs against a stated architecture goal: this project
+chose OpenRouter deliberately as the multi-provider path
+(`project-overview.md`), and going direct to Anthropic narrows that to one
+vendor and needs a second API key. Set against it, tier 1 is the expensive
+call — a large, near-identical prefix on every utterance in the house — and
+it is exactly the shape caching exists for.
+
+A hybrid is available and probably the right first step: **move tier 1,
+leave tier 2 where it is.** Tier 1 needs no web search and pays the big
+prefix; tier 2's prompt is a few hundred tokens, so caching would buy it
+almost nothing. Either way, a move re-runs both suites.
+
+### What trimming actually recovered
+
+Measured on the live tier-1 routing call, before and after:
+
+| | ~tokens |
+| --- | --- |
+| Before | 7,322 |
+| After | 6,153 |
+| **Saved** | **1,169 (−16%)** |
+
+The prose itself went from ~1,739 to ~1,142 tokens (−34%). Nothing was
+deleted for brevity's sake — every cut was either a rule stated twice or a
+tool that does not work. See `voice-and-music.md` for what came out and why.
+
+### Why the fastest option was not chosen
+
+C was more than twice as fast as A and the most consistent of the four. It
+was still rejected, on one case: a date given without a year.
+
+| Config | Correctly handled a bare date |
+| --- | --- |
+| B | 3 / 3 |
+| C | 1 / 3 |
+
+The failure mode is not "unhelpful", it is **confidently wrong** — reporting
+a previous year's game as though it were the answer, with no year attached.
+That is the one outcome this suite treats as a hard failure, so two seconds
+is a cheap price to remove it. B is live.
+
+The general lesson, worth keeping: *pick on the hard-failure case, not on
+the mean.* C won every other row.
+
 ## Negative results — things that made no difference
 
 Recorded so they are not retried:
@@ -102,6 +203,12 @@ Recorded so they are not retried:
   is judgment on *ambiguous and false-premise* questions, not raw retrieval.
 - **Prompt wording, for the narration leak.** Only the architectural change
   fixed it. See above.
+- **Provider-side I/O logging, for latency.** Enabled during debugging and
+  suspected of slowing the round trip. Measured with it off: 8.4s median
+  against 8.3s with it on. A real confound to control for, and an entirely
+  empty one.
+- **Removing the escalation hop, for latency.** See "Model profiling" — it
+  is slower, not faster.
 
 ## Defects found by the suite, and fixed
 
@@ -109,9 +216,14 @@ Recorded so they are not retried:
 | --- | --- | --- |
 | No date context in tier-2 | A bare date resolved silently to a previous year's event, reported as if current | Inject today's date into the tier-2 prompt; require an explicit date or year whenever the answer is not near today |
 | Unbounded list answers | "List every US president" returned a ~90-word single sentence — unusable as speech | Hard word cap plus a rule to give a count and two or three examples instead of reciting any list over three items |
+| Tier 1 sometimes declined to escalate | A question that looked like settled general knowledge was answered from the model's own memory instead: stale (it stopped at the wrong president), unbounded, and prefixed with "I can answer this from my knowledge:" | Tier 1's instruction now says to escalate *even for questions that look like simple facts, lists, or history* |
 
-Both were invisible while the false hallucination diagnosis was consuming
-attention.
+The first two were invisible while the false hallucination diagnosis was
+consuming attention. The third only appeared during model profiling, on a
+run where nothing about tier 1 had changed — **escalation is a model
+judgment, so it is probabilistic, and a case that routes correctly today can
+route differently tomorrow.** Any suite run has to check *whether* the
+escalation fired, not just whether the answer was good.
 
 ## Regression suite
 

@@ -552,6 +552,92 @@ model or prompt changes, separately from correctness.
 
 The last two exist because of the recall list; see `music-recall-memory.md`.
 
+### Prompt slimming, 2026-08-20 — what came out and what it cost
+
+Tier 1's prompt is paid on **every utterance in the house**, so it was cut
+from ~1,739 to ~1,142 tokens. Nothing was removed for brevity: each cut was
+either a rule stated in two places or a tool measured not to work.
+
+- **`clarify_music_choice` un-exposed.** It carried ten fields — the largest
+  tool schema here — and this document already recorded that the model does
+  not reliably call it, across six consecutive negative results. Paying for
+  it on every request bought nothing. The script itself is left in place as
+  a record; un-exposing is what removes the cost, and it is reversible.
+- **The searching-and-choosing rules now live only in `search_music`'s
+  description.** They were previously stated there *and* in the prompt. The
+  tool description is the better home: it is what the model reads at the
+  moment it decides.
+- **Repeat routing detail likewise lives only in `set_music_repeat`'s
+  description**, which is the copy that earned its length by fixing a real
+  refusal.
+
+**The general rule this suggests:** when a rule is about *how to use one
+tool*, put it in that tool's description, not the prompt. The prompt should
+carry only what spans tools — routing between them, and how to report.
+
+### "Repeat, no target" — fixed, and the diagnosis was instructive
+
+**Status: 3 of 3, verified by reading the `repeat` attribute.** Getting there
+corrected a wrong theory, so the route matters more than the result.
+
+The case broke immediately after the prompt slimming above — from 1 of 3 to
+0 of 4. Three attempts to argue the model out of it all failed: the existing
+prompt rule, an explicit "do not ask which speaker" added to the prompt, and
+that same instruction moved into the `player` field's own description. The
+conclusion drawn at the time — *this needs a structural fix, wording will
+never work* — matched this document's own standing rule and was wrong.
+
+**The structural fix was applied and did not fix it either.** With `player`
+removed entirely, so there was literally nothing to ask about, the model
+simply moved its question to the other axis: it began asking *which song was
+playing*, for a tool whose description states it has no song field.
+
+What actually worked was restoring specificity the slimming had removed. The
+old routing rule listed the trigger phrasings explicitly — "put this on
+loop", "turn off repeat", and others. The trimmed version kept only "repeat
+this" and "stop repeating", and the failing request was *"put this song on
+repeat"*. Listing the phrasings again fixed it on the next attempt, 3 of 3.
+
+Two things worth carrying forward:
+
+- **That phrase list was load-bearing, not duplication.** It looked like
+  verbose restatement of a rule already implied elsewhere. It was doing the
+  work. When trimming a prompt, near-duplicate *examples* are the most
+  dangerous thing to cut, because what they buy is invisible until a request
+  falls outside what survives.
+- **"Wording can't fix this" is a claim that needs testing, not assuming.**
+  Three failures in a row made the structural explanation feel settled, and
+  it was reached before the actual cause had been isolated. The structural
+  change was kept regardless — `set_music_repeat` no longer takes a `player`
+  and resolves the speaker from whatever is currently playing, which is both
+  closer to what "repeat *this*" means and removes this tool's exposure to
+  defect #4 — but it was not what fixed the bug.
+
+### This suite is invalidated by tier-1 prompt changes that look unrelated
+
+The tier-1 agent both routes music *and* decides when to escalate a general
+knowledge question (`general-knowledge-search.md`). They share one prompt,
+so a change to the escalation wording invalidates this suite too. That is
+not theoretical — a run triggered by exactly such a change surfaced two
+things worth recording:
+
+- **"Repeat, current, no target" degraded to asking rather than acting: 1
+  of 3 reps did the right thing.** The other two asked which speaker to use
+  instead of omitting `player` and taking the documented Living Room
+  default. This is the same fragility as defect #4 — the model is unwilling
+  to commit to a player when none is named — but expressed as a question
+  rather than as the wrong guess. Asking is the safer failure, and it is
+  still a failure: the prompt says act on the most likely reading. Whether
+  the escalation edit made this worse was not isolated; it was already the
+  case this suite flags as its most fragile.
+- **The nonsense-query case failed, but the measurement was contaminated**
+  and should not be counted. The nonsense word used had itself been logged
+  into the recall list by an earlier failed run, so the model matched it as
+  a legitimate recent play. This is the self-reinforcement trap in
+  `music-recall-memory.md` biting a *test* rather than a user. **Clean the
+  recall list immediately before this case, every time** — a prior run's
+  failure silently becomes this run's input.
+
 **Repeat cases verify via the player's `repeat` attribute, not the spoken
 reply** — same rule as everywhere else in this doc, and specifically
 important here since the reply already misreported the target device once

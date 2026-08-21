@@ -136,19 +136,15 @@ search_music:
   alias: Search Music
   icon: mdi:music-note-plus
   description: 'Search the music library and streaming services for something to play.
-    Always call this BEFORE play_music — it returns real candidate matches for you
+    Always call this BEFORE play_music - it returns real candidate matches for you
     to choose from and plays nothing itself. Search results are ordered only by each
     provider''s own internal ranking, not by correctness: a title can match several
     unrelated real songs. Pick the candidate that actually matches what was asked,
     using your own knowledge (the well-known original, the artist implied or named,
-    a specific version if the user asked for one) — do not just take the first result.
-    A candidate with a "note" field means it closely matches something recently played
-    in this house. If you would otherwise pick a DIFFERENT candidate than the noted
-    one, do not decide yourself — call clarify_music_choice with the noted candidate
-    as one option and the candidate you would otherwise pick as the other, and let
-    the user choose. Only skip clarify_music_choice when the noted candidate is already
-    the one you would pick anyway, or when the request clearly asked for something
-    specific the note does not match (e.g. it named a different artist).'
+    a specific version if the user asked for one) - do not just take the first result.
+    A candidate with a "note" field closely matches something recently played in this
+    house: prefer it when the request is vague or garbled, but not over a clearly
+    better match.'
   mode: restart
   fields:
     query:
@@ -596,14 +592,14 @@ clarify_music_choice:
 set_music_repeat:
   alias: Set Music Repeat
   icon: mdi:repeat
-  description: Turn repeat on or off on a speaker. You do NOT need to know the song's
-    name, artist, or anything about what is playing to call this - there is no field
-    for it. It acts on whatever that speaker happens to be playing (or will play next),
-    by device only. Use it for 'repeat this song', 'play this on loop', 'stop repeating',
-    'turn off repeat' - anything that names no new content. Never ask the user what
-    song is playing before calling this; you don't need to know. For 'play X on repeat'
-    where X is newly named content, use search_music then play_music with its repeat
-    field instead - do not call this script for that case.
+  description: Turn repeat on or off. Call this with ONLY the mode - there is no speaker
+    field and no song field, so there is nothing to ask the user about. It figures
+    out the speaker itself from whatever is currently playing. Use it for 'repeat
+    this song', 'play this on loop', 'stop repeating', 'turn off repeat' - anything
+    that names no new content. Never ask which speaker or which song; you cannot pass
+    either. For 'play X on repeat' where X is newly named content, use search_music
+    then play_music with its repeat field instead - do not call this script for that
+    case.
   mode: restart
   fields:
     mode:
@@ -615,62 +611,14 @@ set_music_repeat:
           options:
           - one
           - 'off'
-    player:
-      name: Player
-      description: Which speaker to set repeat on. Omit to use the Living Room Speaker.
-      required: false
-      selector:
-        entity:
-          domain: media_player
-          integration: music_assistant
   sequence:
-  - alias: Resolve target player
+  - alias: Resolve the speaker from what is actually playing
     variables:
-      p: '{{ player | default('''', true) | string }}'
-      matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
-        ''defined'') | list -%}
-
-        {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
-        | list) + (candidates | selectattr(''name'', ''eq'', p) | map(attribute=''entity_id'')
-        | list) -%}
-
-        {%- set ns = namespace(found=(direct | first | default('''', true))) -%}
-
-        {%- if ns.found == '''' and p != '''' -%}
-
-        {%- for c in candidates -%}
-
-        {%- set an = area_name(c.entity_id) -%}
-
-        {%- if ns.found == '''' and an and (an | lower) in (p | lower) -%}
-
-        {%- set ns.found = c.entity_id -%}
-
-        {%- endif -%}
-
-        {%- endfor -%}
-
-        {%- endif -%}
-
-        {{ ns.found }}'
-      target_player: '{{ matched if matched != '''' else ''media_player.living_room''
+      playing: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
+        ''defined'') | selectattr(''state'', ''eq'', ''playing'') | map(attribute=''entity_id'')
+        | list }}'
+      target_player: '{{ playing[0] if (playing | length) == 1 else ''media_player.living_room''
         }}'
-  - alias: Fail loudly if a named speaker did not resolve
-    if:
-    - condition: template
-      value_template: '{{ p != '''' and matched == '''' }}'
-    then:
-    - variables:
-        err:
-          error: No speaker is named '{{ p }}'. Nothing was changed. Retry using one
-            of the exact speaker names listed.
-          valid_speaker_names: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''name'') | list }}'
-          valid_rooms: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''entity_id'') | map(''area_name'') | select(''string'')
-            | unique | list }}'
-    - stop: Unknown speaker
-      response_variable: err
   - action: media_player.repeat_set
     target:
       entity_id: '{{ target_player }}'
@@ -681,6 +629,9 @@ set_music_repeat:
         repeat: '{{ mode }}'
         player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
           true) }}'
+        chosen_because: '{{ ''it is the speaker currently playing'' if (playing |
+          length) == 1 else ''nothing was playing, so the default speaker was used''
+          }}'
   - stop: Repeat mode set
     response_variable: result
 ask_general_knowledge:
