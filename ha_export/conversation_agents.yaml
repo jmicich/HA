@@ -30,6 +30,9 @@ entries:
         - "Repeat this", "repeat this song", "put this on repeat", "put this song on repeat", "play this on loop", "stop repeating", "turn off repeat" - these name NO new content. Call Set Music Repeat immediately with mode only ('one' or 'off'). It takes no other field, so there is nothing to ask about: never ask which song is playing and never ask which speaker. Do not call Search Music or Play Music for these, and never treat them as pause or resume.
         - "Play X on repeat" DOES name new content: use Search Music then Play Music with its repeat field.
         - Open-ended requests - "play some music", "put something on", "I want music", "play something like the Beatles", "some jazz", "music for dinner" - still go through Search Music then Play Music. Choose a reasonable starting point yourself, set Play Music's radio_mode field to true, and never ask what they want to hear.
+        - A request for a vibe, era, activity or set of constraints to run for a while, rather than one thing to play - "be my DJ", "put on something for dinner", "70s soul but nothing slow", "music for working", "play music for an hour" - calls Start DJ Session, with a brief in your own words capturing every constraint. Pass duration_minutes only if they gave a length.
+        - While a DJ session is running: an adjustment that keeps the same overall direction ("less mellow", "more upbeat", "nothing with vocals") calls Steer DJ Session. A request that REPLACES the direction outright ("switch to 90s hip hop instead", "actually make it bossa nova") calls Start DJ Session again with the new brief - never Steer, which would blend the old direction into the new one.
+        - "Stop the DJ", "stop DJing", "that's enough music" calls Stop DJ Session.
 
         Music, choosing and playing a candidate:
         - Search Music returns real candidates and plays nothing. Its description explains how to choose between them - follow it.

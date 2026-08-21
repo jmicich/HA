@@ -166,20 +166,44 @@ def export_conversation_agents(source: Path):
     return {"entries": sorted(entries, key=lambda e: (e["domain"], e["entry_id"]))} if entries else None
 
 
-def export_helpers(source: Path):
-    """input_select definitions, exactly as authored.
+# Helper domains whose .storage file holds authored definitions worth backing
+# up. Each is a separate .storage file keyed by domain name.
+HELPER_DOMAINS = (
+    "input_boolean",
+    "input_datetime",
+    "input_number",
+    "input_select",
+    "input_text",
+    "counter",
+    "timer",
+)
 
-    `options` here is the *configured* list and is safe to export verbatim:
-    `input_select.set_options` does not write back to this file. A helper used
-    as a runtime buffer therefore still reads as its original placeholder, and
-    produces no diff churn. Its live contents are state, held in
-    `core.restore_state` and covered by HA's own snapshots, not by this.
+
+def export_helpers(source: Path):
+    """UI-created helper definitions, exactly as authored.
+
+    Covers every domain in HELPER_DOMAINS, not just `input_select`: a feature
+    that stores session state across several helper types (see the DJ session
+    helpers) is otherwise only half-captured, which is worse than not
+    capturing it at all because the gap is invisible.
+
+    For `input_select`, `options` here is the *configured* list and is safe to
+    export verbatim: `input_select.set_options` does not write back to this
+    file. A helper used as a runtime buffer therefore still reads as its
+    original placeholder, and produces no diff churn. Its live contents are
+    state, held in `core.restore_state` and covered by HA's own snapshots, not
+    by this. The same split applies to the other domains: definitions here,
+    current values in restore_state.
     """
-    data = load_storage(source, "input_select")
-    if not data:
-        return None
-    items = [scrub(item) for item in data.get("items", [])]
-    return {"input_select": sorted(items, key=lambda i: i.get("id", ""))} if items else None
+    payload = {}
+    for domain in HELPER_DOMAINS:
+        data = load_storage(source, domain)
+        if not data:
+            continue
+        items = [scrub(item) for item in data.get("items", [])]
+        if items:
+            payload[domain] = sorted(items, key=lambda i: i.get("id", ""))
+    return payload or None
 
 
 def export_pipelines(source: Path):

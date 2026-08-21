@@ -391,6 +391,188 @@ represent. Those are the things stage 2 would add, and they are the things
 that cost real tokens.
 
 
+## DJ sessions (curated open-ended listening)
+
+Added 2026-08-21. **Stage 2 of the DJ-mode idea; stage 1 is "Open-ended
+playback (radio mode)" above and is a different, cheaper thing.** Radio mode
+seeds MA's similar-tracks fill and costs nothing per track. A DJ session
+generates an actual tracklist against a brief, verifies every track exists
+before playing it, and can be steered mid-session.
+
+### Shape
+
+Three tools are exposed to Assist — `start_dj_session`, `steer_dj_session`,
+`stop_dj_session` — plus one internal script, `script.dj_queue_tracks`,
+which is **deliberately not exposed** (verified: `conversation` exposure set
+to false). All the expensive logic lives in the worker; the exposed tools are
+thin. That keeps three tool schemas on the tier-1 prefix instead of four.
+
+Session state lives in helpers because a script cannot hold state between
+calls: `input_boolean.dj_session_active`, `input_text.dj_session_player`,
+`input_text.dj_session_brief`, `timer.dj_session`, and
+`input_select.dj_session_history`.
+
+**The player is resolved once, at session start, and stored.** This is the
+defect #4 mitigation: a session lasts an hour, and re-resolving per batch
+would give the player-substitution bug an hour of chances instead of one.
+
+### The curation engine is OpenAI's AI Task, and that was forced
+
+`ai_task.generate_data` takes a `structure` schema and returns typed data, so
+there is no prose to parse — a real advantage over the
+`conversation.process` escalation pattern that `ask_general_knowledge` uses,
+which returns a speech string. Nested objects work, so the model returns
+`[{artist, title}, ...]` directly rather than a delimited string that would
+have to be split on a separator that can occur inside titles.
+
+**The Anthropic AI Task entity cannot do this today, and the failure is
+upstream, not local.** Calling `ai_task.generate_data` with any `structure`
+against the Anthropic entity fails with:
+
+```
+anthropic.BadRequestError: 400 - output_config.format.schema:
+For 'object' type, 'additionalProperties' must be explicitly set to false
+```
+
+HA's `anthropic` integration builds a JSON schema from the `structure`
+selector and never sets `additionalProperties: false`, which the Anthropic
+structured-output API requires. The script then dies a second death with
+`Last content in chat log is not an AssistantContent`. The identical call
+against `ai_task.openai_ai_task` succeeds, which is what isolates it to the
+Anthropic integration rather than to the schema.
+
+**Consequence worth knowing:** curation runs on OpenAI while the rest of the
+voice stack runs on Anthropic, so it does not benefit from the prompt caching
+in `prompt-caching.md`, and it is a second provider to keep an eye on.
+Revisit if the upstream schema bug is fixed — Anthropic is the better
+music-knowledge bet and already has caching configured.
+
+### Verification is the load-bearing part
+
+Every generated track is searched, and a candidate is accepted only if the
+normalised title matches (equal, or the candidate starts with what was asked
+— so `Dreams (2004 Remaster)` passes) **and** the requested artist appears in
+the candidate's artists. Normalisation strips punctuation and case, which is
+required: MA returns `Paint It, Black` for `Paint It Black`, and strict
+equality would drop a correct track over a comma.
+
+**It catches real hallucinations, not hypothetical ones.** Measured drops:
+
+| Brief | Generated | Queued | Notable drop |
+| --- | --- | --- | --- |
+| 70s soul and funk, upbeat | 12 | 10 | `Con Funk Shun - Love Train` — *Love Train* is by The O'Jays. A real title welded to the wrong artist, which is exactly the failure this exists to stop. |
+| mellow jazz, nothing with vocals | 12 | 10 | `Billie Holiday - Solitude (Instrumental)` and `Stan Getz - The Girl from Ipanema (Instrumental)` — the model invented "(Instrumental)" variants to satisfy the brief. An instrumental Billie Holiday track is a contradiction. |
+
+**Survival rate runs 10–12 of 12**, so strict matching does not starve the
+queue — that was the open question when this was designed, and it is
+answered. A `(Instrumental)`/`(Remastered)` prohibition was added to the
+generation instructions after the second run, which lifted the next run to
+11 of 12.
+
+**The drop list is returned, not swallowed.** `dropped` and `dropped_titles`
+come back in the result so a bad brief is visible rather than silently
+producing a three-track session.
+
+### Latency: measured, and the first fix was the whole feature
+
+The first working version took **39.3s** before any sound: `ai_task` 12.2s,
+the verify loop 23.1s (12 searches at ~1.9s each including a 250 ms spacing
+delay), `play_media` 4.0s. That is not a voice feature — Assist can time out
+before the music starts.
+
+**Fix: play the first verified track immediately, then queue the rest behind
+it.** Time to first sound dropped to **3.1s**, with the remaining nine tracks
+landing at +26s while the first one plays. Same total work, but the room is
+not silent for it.
+
+**`radio_mode` is deliberately false on that first call and true on the
+tail call.** With it true on the first call, MA immediately fills ~29
+similar tracks and the curated `add` lands *behind* them — the curation would
+be inaudible for two hours. Radio fill is armed only once the curated tracks
+are already in the queue, where it does its intended job as the
+end-of-session backstop.
+
+**One provider call carries the whole batch.** `music_assistant.play_media`
+accepts a *list* of `media_id` values, verified directly — so a 10-track
+batch is two calls, not ten, which matters given the rate limiter this
+document warns about elsewhere. **MA does not preserve the list order**
+(measured: passing `[Stairway, Paint It Black, Dreams]` played Dreams first,
+with shuffle off). Curation here is about *what* plays, not the running
+order; do not promise a running order.
+
+### Dedupe, and the duplicate that proved it was needed
+
+The first steer queued **the track that was already playing** as the next
+track. Nothing told the model what the session had already used, so
+regenerating against a similar brief re-picked the same canonical songs.
+
+Fixed with `input_select.dj_session_history`, using the same mechanism and for
+the same reason as the recall list in `music-recall-memory.md`: the store has
+to be template-readable, and `input_select.set_options` is the one thing that
+holds an arbitrary runtime list and can be read from a template. Every
+generated title goes in; the generation instructions inject the list as a
+do-not-repeat set. Cleared at session start, so a *new* session may replay
+favourites, and accumulated across steers within a session, which is where
+the repetition actually hurt.
+
+Verified: the steered batch after the fix had **zero overlap** with the batch
+before it.
+
+### Steering: what works, and the two things that did not
+
+**What works.** Direction is honoured (`more upbeat, add some piano trio
+swing` produced Night Train, Spain, Poinciana, Caravan), dedupe holds, the
+currently-playing track is preserved, and the up-next run is replaced —
+queue measured dropping 39 → 13, i.e. the old tail really is cleared.
+
+**Getting there ruled out two approaches, both measured:**
+
+- **`enqueue: replace_next` with `radio_mode: true` does not replace
+  anything useful.** The queue stayed at 39 items and `next_item` was still
+  a track from the previous batch. The radio fill armed by the previous call
+  sits between the current track and the insert point.
+- **`enqueue: next` is worse.** The queue ballooned 39 → 76, because each
+  steer re-armed radio fill on top of the last one, and `next_item` was still
+  from the batch before.
+
+**`replace_next` with `radio_mode: false` is the combination that works.**
+The rule generalises: **arm radio fill exactly once per session, on the
+starting call.** Re-arming it on every steer compounds the queue.
+
+### The open defect: a steer cannot replace the brief, only extend it
+
+The brief accumulates (`"classic soul and Motown, upbeat; switch to 90s hip
+hop instead"`), so a *replacement* instruction blends instead of overriding.
+Measured: that brief produced **8 soul tracks and 4 hip hop tracks**.
+
+**A prompt fix was tried and did not work.** Adding *"Later instructions
+always win over earlier ones... drop the earlier direction completely rather
+than blending"* to the generation instructions produced the identical 8/4
+split. One attempt, not six — but it failed, and it is recorded so the next
+person does not spend the attempt again.
+
+**Routed around at the tier-1 layer instead, and this is the better fix
+anyway.** A request that replaces the direction outright is not a steer, it
+is a *new session*: the prompt now sends "instead", "actually make it" and
+"switch to" to `start_dj_session` with a fresh brief. Verified end to end —
+"actually switch to 90s hip hop instead" produced a brief of exactly
+`90s hip hop`, a history of twelve hip hop tracks with no soul at all, and
+2Pac playing. **The underlying blend inside `steer_dj_session` is still
+there**; it is simply no longer reachable by the phrasings that trigger it.
+A steer that *partially* replaces ("keep it upbeat but drop the Motown") is
+untested and is the case most likely to still blend.
+
+### Cost
+
+Each generation is one `ai_task` call. A session costs one at start, plus one
+per steer — roughly 1–3 an hour of listening, not one per track. Radio fill
+after the curated batch is free. Against that, the three tool schemas are on
+the tier-1 prefix and are therefore paid on **every utterance in the house**,
+cached (see `prompt-caching.md`) but not free — the prompt grew ~830
+characters and the tool schemas rather more. If DJ mode goes unused,
+un-exposing the three scripts is the lever, exactly as it was for
+`clarify_music_choice`.
+
 ## Traps, with evidence
 
 **Artist-type playback triggers unbounded enumeration.** MA fans out API
@@ -662,6 +844,12 @@ model or prompt changes, separately from correctness.
 | Open-ended, while playing | same phrasing, but with music already playing — **known to fail**, routes to resume instead; see "Open-ended playback" |
 | Open-ended, vibe | "play something like [artist]" — `radio_mode` true |
 | Specific request stays specific | "play the album [name]" — `radio_mode` must **not** be set; this is the over-triggering case |
+| DJ session, start | "be my DJ, something for cooking dinner" → `start_dj_session`, music inside ~5s, `dropped` low |
+| DJ session, duration | "...for the next 45 minutes" → `timer.dj_session` active, and the session ends when it fires |
+| DJ session, steer | "less mellow" mid-session → current track survives, up-next replaced, no overlap with what already played |
+| DJ session, replace | "switch to [genre] instead" → must route to `start_dj_session`, NOT `steer` — see the open defect |
+| DJ session, stop | "stop the DJ" → playback paused, session flag off, timer idle |
+| DJ session, steer with none running | must refuse, not silently start one |
 | Mangled recall | garbled version of a previously played item → maps to it |
 | Novel request | absent from the recall list → treated as new, **must not** bend |
 
@@ -1025,23 +1213,12 @@ within a brand.
   not render even with recommended settings off; upstream bug. This is a
   leading suspect for the non-determinism above, which is why OpenRouter
   exists as an alternative path.
-- **LLM-curated tracklists ("DJ mode" stage 2).** Investigated alongside the
-  radio-mode passthrough above and deliberately deferred, not rejected. Prior
-  art exists and is worth reading before building: Music Assistant's own
-  **Don't Stop The Music** (auto-enables radio fill when the queue drains)
-  and its **Sonic Similarity** plugin (local audio analysis, works on
-  filesystem libraries where providers supply no similarity data), plus a
-  community integration that defines "stations" as text prompts, resolves
-  generated tracks through `music_assistant.play_media`, and refills on a
-  queue-low trigger. **That project's author started on DSTM and moved off
-  it** because it drifted and duplicated on niche stations — inherit that
-  negative result rather than re-deriving it. The two decisions already made
-  for a future stage 2, so they are not relitigated: suppress `music_played`
-  during a curated session (see "Open-ended playback" for why), and verify
-  each resolved candidate against what was asked before enqueuing it rather
-  than trusting the generated title. The open unknown is what fraction of a
-  generated batch survives that verification — measure it on the first batch
-  rather than guessing, since a strict match could starve the queue.
+- **A polling refill automation for DJ sessions.** Considered and not built:
+  the media_player entity exposes no queue-depth attribute (checked), so a
+  "queue running low" trigger would have to poll `music_assistant.get_queue`
+  on a time pattern. The curated batch plus radio fill as a backstop covers
+  the same need with no polling and no extra `ai_task` calls. Revisit only if
+  sessions are observed running dry.
 - **An upstream `home-assistant/core` PR to expose Spotify's popularity
   field.** Investigated in full before the search/play redesign was chosen
   instead. Music Assistant's Spotify provider already parses `popularity`
@@ -1088,7 +1265,21 @@ Regenerate everything this doc no longer states:
   Sonnet 5 experiment was tried and reverted, see "The recall-boost
   mechanism" above.
 - **MA config entry ID** (needed as a literal in service calls) —
-  `ha_get_integration(query="music assistant")`
+  `ha_get_integration(query="music assistant")`. It is also hardcoded as a
+  literal inside `search_music` and `dj_queue_tracks`; both need updating if
+  the entry is ever recreated.
+- **DJ session state** — the five `dj_session_*` helpers. `dj_session_active`
+  should be `off` and `dj_session_brief` empty whenever no session is running;
+  a stuck `on` means a session ended without `stop_dj_session` and `steer`
+  will act on a dead session.
+- **Which AI Task entity curation uses, and whether Anthropic works yet** —
+  `ha_call_service('ai_task', 'generate_data', ...)` with any `structure`
+  against the Anthropic entity. If it no longer 400s on
+  `additionalProperties`, the upstream bug is fixed and curation can move off
+  OpenAI.
+- **That the worker stayed unexposed** — `ha_get_entity_exposure` on
+  `script.dj_queue_tracks`; it must be false, or its ten-field schema is
+  billed on every utterance in the house.
 - **Provider errors, rate limits, playback locks** — the MA add-on log;
   these never appear in the HA log
 

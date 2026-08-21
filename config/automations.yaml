@@ -20,3 +20,21 @@
         list)[:40] }}'
   mode: queued
   max: 10
+- id: '1787341200001'
+  alias: DJ session — stop when the duration runs out
+  description: Ends a DJ session started with a duration ("play music for an hour").
+    timer.finished fires only on natural expiry, not on timer.cancel, so stopping a
+    session by voice does not re-enter stop_dj_session through this. The active-session
+    condition is a second guard on the same thing. See voice-and-music.md.
+  triggers:
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: timer.dj_session
+  conditions:
+  - condition: state
+    entity_id: input_boolean.dj_session_active
+    state: 'on'
+  actions:
+  - action: script.stop_dj_session
+  mode: single
