@@ -102,6 +102,12 @@ cheap to run. Current mapping:
 A tier-1 prompt change touches **both** suites — the same prompt routes
 music and decides when to escalate.
 
+**Prompt-caching cost is checked separately, not by either suite.** A suite
+run is a burst over one prefix, which is the best case for caching, so a
+suite can only ever flatter it. The check is periodic, runs against ordinary
+household use, and is defined in `docs/prompt-caching.md` — including the
+ratio at which caching starts costing money rather than saving it.
+
 That regression table **is** the music playback integration suite; treat it
 as a test suite, not documentation. Extend this mapping as other subsystems
 gain suites.

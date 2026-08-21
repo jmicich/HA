@@ -225,6 +225,122 @@ judgment, so it is probabilistic, and a case that routes correctly today can
 route differently tomorrow.** Any suite run has to check *whether* the
 escalation fired, not just whether the answer was good.
 
+### Fixed: "yesterday" asserted without checking the date
+
+**Status: fixed 2026-08-21, 3 of 3 on the reproduction below.** The route to
+the fix matters more than the fix, because the defect was not where it
+appeared to be.
+
+**Found 2026-08-21, and this one is a genuine hard failure** — the shape the
+suite exists to catch, and the shape wrongly attributed to this system
+earlier when it was in fact correct.
+
+Two instances in a single run, verified against dated searches:
+
+- Asked who won a team's game "yesterday" on a day that team **did not
+  play**, one reply correctly said so and named the actual date, one omitted
+  the qualifier, and one stated the earlier game had happened *"yesterday"*.
+  One correct, one imprecise, **one wrong**, from identical input.
+- Asked a follow-up about another team, it reported a **specific score for a
+  game that had not yet been played** — kickoff was that evening.
+
+The common cause is not retrieval. Search returns the most recent result
+correctly; the model then narrates it with a relative day-word without
+checking that the date it found matches the day the user asked about. The
+existing instruction only requires an explicit date when the answer is "more
+than a few days away from today", so a result one or two days old slips
+through and gets called "yesterday".
+
+**The fix took two layers, and the second one is the finding.**
+
+Tier 2 was corrected first: banned from using relative day-words at all,
+required to name the date of whatever it found, told that "nothing happened
+on that day" is a complete answer, and forbidden from reporting a result for
+anything not yet finished. Asked directly, it then answered *correctly* —
+naming the date and the right result.
+
+**The spoken reply was still wrong.** Tier 1 was discarding the date while
+relaying. Which exposed something not previously understood about this
+architecture:
+
+> **Tier 1 paraphrases the escalated answer; it does not relay it verbatim.**
+
+That single fact explains two separate behaviours. It is why the narration
+leak disappeared when the tier-2 split was introduced — tier 1 was silently
+filtering the leaked preamble out, which was read at the time as the
+architecture solving the problem. And it is why a correct, fully-dated answer
+from tier 2 reached the user stripped of its date. The same mechanism, once
+helpful and once harmful, and it was only ever noticed because of the harm.
+
+Tier 1's instruction now forbids dropping a date, day, year, or qualifying
+phrase that the escalated answer contained, and equally forbids *adding* one
+it did not.
+
+**The lesson worth carrying:** in a two-model chain, testing the answering
+model in isolation is not testing the system. Tier 2 passed on its own and
+the user still got a wrong answer. Reproduce through the whole path, then
+bisect by calling each layer directly — that is what located this in minutes
+after prompt-level guessing had failed.
+
+### Open defect: a stale officeholder inside an otherwise-correct answer
+
+**Found 2026-08-21 by the list-invitation case, which is not what that case
+was built to test.** Asked to list every US president, the reply respected
+the length cap correctly — and then named the *previous* president as the
+current one, and gave a count one lower than the true figure.
+
+What makes this worth its own entry is the contrast. In the same run, asked
+directly who holds a local office, the answer was correct and current. The
+difference is what the question looks like: a "who holds this office now"
+question reads as current and gets searched, while a question that reads as
+settled history gets answered from the model's own knowledge — including the
+part of it that has since changed.
+
+**The prompt already warns about exactly this** ("officeholders change, so
+search rather than answering from memory"), and it did not help, because the
+model did not classify the question as one about the present. That is the
+gap: not a missing instruction, but a misread of which questions have a
+time-sensitive component buried in them.
+
+Untried and worth trying before anything more elaborate: requiring that any
+answer naming a current holder of anything be searched, regardless of how
+the question is phrased.
+
+### Related, found in the same run: the wrong speaker, reported as the right one
+
+Not a general-knowledge case, but recorded here because the run surfaced it
+and it touches this document's reporting rule.
+
+A request naming a room played on a speaker **in a different room**, and the
+spoken reply named the room the user had asked for rather than the one that
+actually played. The trace separates the two faults cleanly:
+
+- The model passed a speaker name that did not correspond to the room asked
+  for. The script then resolved and played exactly what it was told — this
+  is defect #4 in `voice-and-music.md`, not a script bug.
+- The script's response reported the speaker it really used. **Tier 1 said
+  the other one**, echoing the request instead of the returned value.
+
+The second half is a regression against a fix that was specifically made and
+verified earlier: the music scripts were given a `player` field in their
+response precisely so the reply could be grounded in it. The instruction to
+use it is still present and was still not followed. Both faults are in
+`voice-and-music.md`'s territory and need a full music-suite run against the
+current tier-1 agent, which remains outstanding.
+
+### Reproduction, for checking future regressions
+
+Both require a day where the relevant fact makes them meaningful, so re-derive
+the ground truth before using them:
+
+1. Ask who won a team's game "yesterday" on a day that team **did not play**.
+   A correct reply names the date of the game it actually found and states
+   that there was none on the day asked about.
+2. Ask whether a team won "last night" when their next fixture has **not yet
+   kicked off**. A correct reply says they did not play, and does not invent
+   a score. This case previously produced a confident, entirely fabricated
+   scoreline.
+
 ## Regression suite
 
 **Verification method differs fundamentally from the music suite.** There is
