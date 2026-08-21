@@ -1,8 +1,8 @@
 # Home Assistant build-out — project overview
 
-Status as of 2026-08-20. Orientation doc: read this first, then the
+Status as of 2026-08-21. Orientation doc: read this first, then the
 feature-specific docs (`voice-and-music.md`, `music-recall-memory.md`,
-`general-knowledge-search.md`, `dev-environment.md`,
+`general-knowledge-search.md`, `prompt-caching.md`, `dev-environment.md`,
 `wake-word-findings.md`).
 
 ## Documentation principle
@@ -96,6 +96,14 @@ Supported paths for the multi-provider goal:
 - **Ollama** — built-in, takes a URL. The path for local models on a GPU box.
 
 No custom integration or proxy layer is required for either.
+
+**The multi-provider goal is currently on hold for the tier-1 agent.** It
+runs on the direct Anthropic integration instead, because that one supports
+prompt caching and OpenRouter's does not — a difference worth several
+thousand tokens on every utterance in the house. This is a deliberate,
+reversible narrowing, and the route back to OpenRouter *with* caching is
+designed and half-built. See `prompt-caching.md`, which also records why no
+amount of OpenRouter-side configuration can close the gap.
 
 ## Current shape
 

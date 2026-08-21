@@ -16,7 +16,7 @@ pipelines:
   tts_voice: en_US-hfc_female-medium
   wake_word_entity: null
   wake_word_id: null
-- conversation_engine: conversation.anthropic_claude_haiku_4_5
+- conversation_engine: conversation.claude_conversation
   conversation_language: en
   id: 01m00xnr72e4v41b1azex0b7dy
   language: en
