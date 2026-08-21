@@ -222,6 +222,48 @@ the installed version and current `dev`, so the patch applies cleanly to what
 is actually running. Re-check this before starting — it is the assumption the
 whole approach rests on.
 
+## Cost regression check — periodic, and deliberately not a suite case
+
+Caching can turn negative. Cache writes cost 1.25x, so a house that issues
+one isolated command every half hour pays a write every time and never reads
+— that is a **~25% penalty**, not a saving. This needs watching, but the
+obvious way to watch it is wrong.
+
+**Do not measure this during a suite run.** A suite fires many requests
+back-to-back over the same prefix, which is the single best case for
+caching. It will always report a flattering ratio, it will report one even
+if real household use is losing money, and adding it as a suite case would
+therefore create a metric that cannot fail. The workload that needs
+measuring is precisely the one a suite is not.
+
+**The metric: reads per write.** From the multipliers, caching is a net loss
+when
+
+```
+0.1·reads + 1.25·writes  >  1.0·(reads + writes)
+```
+
+which reduces to **reads ÷ writes < 0.28**. So:
+
+| reads ÷ writes | Verdict |
+| --- | --- |
+| below ~0.3 | Caching is **costing** money — turn it off |
+| around 1 | Roughly 55% saving on the cached portion |
+| 8 or more | Close to the 0.1x floor |
+
+Raw hit-rate percentage is the wrong number to track; a high read count
+means nothing without the write count beside it.
+
+**How to run the check:** pick a day of ordinary household use with no suite
+runs or bulk testing in it, read the provider's token-type breakdown for
+that day, and divide reads by writes. Do this after any change to household
+usage patterns, and once after the first full week on a new configuration.
+
+**Recorded for comparison:** the first measurement gave a ratio of roughly
+8, comfortably in the healthy band — but it was taken during rapid testing
+and is therefore an upper bound, not a baseline. The first honest reading is
+still outstanding.
+
 ## Sequencing
 
 1. **Now:** Route A. Caching works today; no maintenance burden.

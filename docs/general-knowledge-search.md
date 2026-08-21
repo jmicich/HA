@@ -225,6 +225,37 @@ judgment, so it is probabilistic, and a case that routes correctly today can
 route differently tomorrow.** Any suite run has to check *whether* the
 escalation fired, not just whether the answer was good.
 
+### Open defect: "yesterday" is asserted without checking the date
+
+**Found 2026-08-21, and this one is a genuine hard failure** — the shape the
+suite exists to catch, and the shape wrongly attributed to this system
+earlier when it was in fact correct.
+
+Two instances in a single run, verified against dated searches:
+
+- Asked who won a team's game "yesterday" on a day that team **did not
+  play**, one reply correctly said so and named the actual date, one omitted
+  the qualifier, and one stated the earlier game had happened *"yesterday"*.
+  One correct, one imprecise, **one wrong**, from identical input.
+- Asked a follow-up about another team, it reported a **specific score for a
+  game that had not yet been played** — kickoff was that evening.
+
+The common cause is not retrieval. Search returns the most recent result
+correctly; the model then narrates it with a relative day-word without
+checking that the date it found matches the day the user asked about. The
+existing instruction only requires an explicit date when the answer is "more
+than a few days away from today", so a result one or two days old slips
+through and gets called "yesterday".
+
+**Two lessons for the fix, neither of which is more prompt emphasis:**
+relative day-words are the failure surface, so the answer should carry the
+date it actually found rather than a word like "yesterday"; and "no event
+happened in that window" is a distinct answer the model currently reaches
+only sometimes, rather than a case it is required to consider.
+
+Recorded rather than fixed, so the fix can be verified against a stated
+reproduction instead of a vague memory.
+
 ## Regression suite
 
 **Verification method differs fundamentally from the music suite.** There is
