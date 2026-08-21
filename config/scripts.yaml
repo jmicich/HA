@@ -38,6 +38,8 @@ play_music:
         {{ ns.found }}'
       target_player: '{{ matched if matched != '''' else ''media_player.living_room''
         }}'
+      radio: '{{ (radio_mode | default(false, true)) and not (repeat | default(false,
+        true)) }}'
   - alias: Fail loudly if a named speaker did not resolve
     if:
     - condition: template
@@ -61,6 +63,7 @@ play_music:
       media_id: '{{ uri }}'
       media_type: '{{ kind }}'
       enqueue: replace
+      radio_mode: '{{ radio }}'
   - alias: Set repeat if requested
     if:
     - condition: template
@@ -76,6 +79,7 @@ play_music:
         played: '{{ name }}'
         kind: '{{ kind }}'
         repeat: '{{ repeat | default(false, true) }}'
+        radio: '{{ radio }}'
         player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
           true) }}'
   - event: music_played
@@ -129,6 +133,19 @@ play_music:
       name: Repeat
       description: True if the request asked to play this on repeat/on loop. Omit
         or false otherwise.
+      required: false
+      selector:
+        boolean: {}
+    radio_mode:
+      name: Radio mode
+      description: True when the request is open-ended listening rather than one
+        specific thing - "play some music", "put something on", "play something like
+        Fleetwood Mac", "some jazz", "music for dinner". Music Assistant then keeps
+        the queue filled with similar tracks after your chosen candidate finishes,
+        so a single call covers the whole session and nothing further is needed from
+        you. Omit or false when the user named a specific song, album or playlist
+        and would not expect it to roll on into other music. Ignored when repeat is
+        true.
       required: false
       selector:
         boolean: {}
