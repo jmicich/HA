@@ -81,11 +81,24 @@ breakdown split input tokens roughly:
 input, so this is a large cost reduction — and unlike the prompt trimming
 that preceded it, it removed nothing.
 
-Two caveats to carry: cache *writes* are billed at a premium over fresh
-input, so a workload of one-off queries spread beyond the cache lifetime can
-cost more rather than less; and the cheap five-minute lifetime means the
-benefit concentrates in bursts of conversation rather than isolated commands.
-The numbers above come from ordinary mixed use, not a benchmark.
+Applying the published multipliers — cache read 0.1x, five-minute cache
+write 1.25x, fresh input 1x — that split bills like **~30% of the input cost
+it would otherwise incur**, a reduction of roughly 70%. Output is unaffected,
+so the saving on a whole request is smaller than that.
+
+**The break-even is the number that actually matters**, because cache writes
+cost *more* than not caching at all. For one write followed by N reads over
+the same prefix, caching wins when `1.25 + 0.1N < N + 1`, i.e. **N > 0.28**.
+
+In plain terms: a single isolated command pays ~25% more than it would
+without caching, and **any second request inside the cache lifetime already
+puts you ahead** — steeply so from there.
+
+That makes the measured 80% read share less impressive than it first looks:
+it was gathered during rapid testing, which is the best case for caching.
+Real household use is sparser, and a house that only ever issues one command
+every half hour would be *paying a penalty*, not saving. Worth re-measuring
+the read/write split against genuine usage before treating the 70% as real.
 
 ### Negative result: no latency improvement
 
