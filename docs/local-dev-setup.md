@@ -262,6 +262,30 @@ correcting the repo and **deploying**, so both sides agree.
 reports no module, call the `pytest` executable directly — it carries its
 own interpreter.
 
+**`yamllint config/` fails locally and passes in CI, and that is correct.**
+On this Windows host it reports
+
+```
+config/scripts.yaml
+  1:12  error  wrong new line character: expected \n  (new-lines)
+```
+
+and exits non-zero. Nothing is wrong. `core.autocrlf` is `true`, so git
+checks these files out with CRLF into the working tree while the committed
+blob stays LF; CI checks out on Linux, sees LF, and passes. Confirm rather
+than assume with `git status --short config/scripts.yaml` — silence means
+git considers the CRLF working copy identical to the LF blob.
+
+**Do not "fix" this** by rewriting line endings, adding `.gitattributes`
+churn, or relaxing the `new-lines` rule — all three change the repo to
+suppress a message that only exists on one developer's filesystem. The
+useful local command is to read past it: check that the only *errors* are
+this one, and judge the run on the rest.
+
+The failure mode this guards against is real and cost time once already:
+seeing a red lint locally, assuming CI is broken, and editing committed
+files to chase it.
+
 ## How to audit this
 
 - **Is the share mounted and writable** — read and write a scratch file on

@@ -306,6 +306,39 @@ Untried and worth trying before anything more elaborate: requiring that any
 answer naming a current holder of anything be searched, regardless of how
 the question is phrased.
 
+**Fixed 2026-08-21, with a cost — read the tradeoff before touching this.**
+The rule above was added to tier 2, phrased to catch the *shape* of the
+question rather than its topic: if the answer would name whoever currently
+holds a role, office, title, record or ranking — or give a running total of
+them — that part is live and must be searched however the question was
+phrased, because "list every X" and "how many X have there been" both end at
+the present.
+
+The content defect is fixed. Three reps of "list every US president in
+order" all returned the correct current president and the correct
+presidency count, verified against an independent dated search rather than
+against training data (the method this project learned the hard way — see
+the hallucination retraction above). Asked directly, the answer is correct
+and carries the swearing-in date.
+
+**What it cost: brevity became unstable.** Before the change, that case
+respected the length cap 3/3. After it, one rep in three recited ~46 names.
+A follow-up edit to the hard-limit bullet — spelling out that having
+searched and holding the complete list is *not* a licence to read it out —
+fixed the brevity but pushed the count off by one instead.
+
+**This is the see-saw pattern, and it was stopped deliberately rather than
+resolved.** Four consecutive edits each fixed the case they targeted and
+broke a neighbouring one. The defect that actually matters — a stale
+officeholder asserted as current — is fixed and verified; what remains
+unstable is a contrived "list every X" phrasing that also happens to sit
+right on the length cap, where the failure is a miscount by one rather than
+a stale fact. **Do not resume tuning this by adding more prompt emphasis.**
+The evidence across four attempts is that this prompt is at its capacity for
+simultaneously-held constraints, and the next attempt should be structural —
+a shorter prompt, a separate path for list-shaped questions, or accepting
+the miscount — not a fifth wording.
+
 ### Related, found in the same run: the wrong speaker, reported as the right one
 
 Not a general-knowledge case, but recorded here because the run surfaced it
@@ -327,6 +360,21 @@ response precisely so the reply could be grounded in it. The instruction to
 use it is still present and was still not followed. Both faults are in
 `voice-and-music.md`'s territory and need a full music-suite run against the
 current tier-1 agent, which remains outstanding.
+
+**Updated 2026-08-21, after that music-suite run: the two halves have
+separated.** The routing fault reproduced — 1 rep in 3 of "play Fleetwood
+Mac in the living room" played on a Dining Room speaker. The *reporting*
+fault did not: the reply said "on the Sonos", naming the speaker the tool
+actually returned rather than the room that was asked for.
+
+So the grounding fix is working, and the sentence above — that the
+instruction "is still present and was still not followed" — describes a
+single observation that has not recurred. On the evidence now available the
+reporting half is not a standing regression; the earlier sighting is better
+read as another instance of the non-determinism that governs everything in
+that suite. The routing half is real, is roughly 1-in-3, and is tracked as
+defect #4 in `voice-and-music.md`, where this run also established that it
+now takes a shape the fail-loud guard cannot catch.
 
 ### Reproduction, for checking future regressions
 
