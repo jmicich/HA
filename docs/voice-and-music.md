@@ -52,7 +52,8 @@ entirely — they return spoken-word documentaries in the tracks bucket.
 
 **`play_music`** — fields: `uri` (required), `kind` (required — `track`,
 `album`, `playlist`, or `radio`; **`artist` is not an option**, see traps),
-`name` (required), `artist` (optional), `player` (optional). Plays exactly
+`name` (required), `artist` (optional), `player` (optional), `radio_mode` (optional — see
+"Open-ended playback" below). Plays exactly
 the candidate it's given via `music_assistant.play_media`. It does no
 ranking or resolution of its own — that already happened in `search_music`
 and, before that, in the model's choice of candidate. Fires the
@@ -296,6 +297,99 @@ feature; the exact same shape already documented for `play_music`. Left as
 further evidence for defect #4's open root cause, not something fixed
 here — retesting with the room named explicitly worked correctly and is
 the verified path.
+
+## Open-ended playback (radio mode)
+
+Added 2026-08-21 for "play some music" / "put something on" — the case where
+someone wants music but has nothing specific in mind. **This is stage 1 of a
+larger "DJ mode" idea; stage 2 (LLM-curated tracklists) is deliberately not
+built — see "Deliberately not done".**
+
+**The capability already existed natively — this was a wiring gap, not a
+missing feature**, exactly like Repeat above. `music_assistant.play_media`
+has always accepted a `radio_mode` boolean, which makes Music Assistant keep
+the queue topped up with similar tracks from the provider's similar-tracks
+API after the seed item finishes. Verified by reading the live service
+schema, not assumed. `script.play_music` simply never passed it.
+
+**Design decision, and the reason it is worth stating:** the obvious build
+for "DJ mode" is to have the LLM generate a tracklist. That is strictly
+more expensive and strictly more exposed to defect 3c — every generated
+title is an independent chance to fuzzy-match onto unrelated real content,
+unattended, over dozens of tracks. MA's radio fill costs **zero marginal
+LLM tokens** and cannot hallucinate a track, because it never names one.
+Reach for model curation only where similar-tracks genuinely cannot express
+the request, not as the default.
+
+**`radio_mode` loses to `repeat`, structurally rather than by convention.**
+The two are contradictory: `repeat: one` loops the current track forever, so
+radio-filled tracks queue up behind it and never play — a silently broken
+state rather than a loud one. The script computes
+`radio = radio_mode and not repeat`, so the conflict is resolved before it
+reaches MA rather than being left to the model to avoid. Verified: with both
+flags set, `repeat_mode` is `one`, the queue holds 1 item, and the response
+reports `radio: false`.
+
+**Measured, by reading the queue rather than the spoken reply:**
+
+| Case | Queue after | Result |
+| --- | --- | --- |
+| Track seed, `radio_mode` omitted | `items: 1`, `next_item: null` | Unchanged from before — backward compatible |
+| Track seed, `radio_mode: true` | `items: 6`, next is a different artist | Radio fill working |
+| Track seed, both flags true | `items: 1`, `repeat_mode: one` | Radio correctly suppressed |
+| "play some music" via the real pipeline | `items: 38` | Model set the flag unprompted |
+
+**Pipeline run of 2026-08-21, 4 reps, verified by trace rather than reply.**
+Each rep was checked by reading `play_music`'s trace for the `radio_mode`
+the model actually passed, not by what it said out loud.
+
+| Rep | Utterance | Result |
+| --- | --- | --- |
+| 1 | "play some music" (from idle) | ✅ playlist seed, `radio_mode: true` |
+| 2 | "put something on" (**while already playing**) | ❌ called **no music tool at all** — see below |
+| 3 | "put something on" (from idle) | ✅ playlist seed, `radio_mode: true` |
+| 4 | "play something like the Beatles" | ✅ `radio_mode: true` |
+| 5 | "play the album Rumours by Fleetwood Mac" | ✅ `radio_mode` **not** passed, `radio: false` |
+
+**The one failure is a real, reproducible-shaped gap, not noise.** With music
+already playing, "put something on" fired neither `search_music` nor
+`play_music` — trace-confirmed, both scripts' `last_triggered` unchanged —
+so the model routed it to a built-in transport intent instead. The same
+utterance from idle worked. **The prompt's own ordering explains it:** the
+rule above the new one says bare transport controls apply when the request
+"names no content at all", and "put something on" names no content. The two
+rules overlap, and with music already playing the resume reading wins.
+
+Not fixed here, and worth stating precisely rather than as "the model
+ignored the rule": this is a rule-precedence collision inside the prompt,
+which is a different failure from defect #3b's "auxiliary signal never
+enters the decision". The obvious fix — an explicit carve-out saying an
+open-ended *request to start something* is never a resume — is untried, and
+per the "Repeat, no target" lesson above, the phrase list is the load-bearing
+part, so extend it rather than reasoning about it abstractly. **Rep 5 is the
+guard against over-correcting**: whatever is added must not start making
+specific album requests set `radio_mode`.
+
+**`radio` was added to the script's `result`, not just passed through.** Same
+reasoning as the `player` grounding fix above: the model cannot honestly say
+"it'll keep going" unless the tool tells it that it will. A prompt line
+alone would have nothing true to ground on.
+
+**This does not flood the recall list, and that is a property of where the
+filling happens rather than a guard that was built.** MA extends its own
+queue server-side; `script.play_music` fires exactly once, for the seed. So
+`music_played` fires once and the recall list gains one entry, not forty.
+**Do not assume this survives into stage 2** — an LLM-curated design that
+enqueues each track through `play_music` would log every one, evicting the
+household's real history from a 40-entry list. That is a decision stage 2
+has to make explicitly, not inherit.
+
+**What this deliberately does not do:** it cannot be steered mid-session
+("less mellow", "no Motown"), it has no notion of a session or a duration,
+and it cannot express a request that provider similar-tracks cannot
+represent. Those are the things stage 2 would add, and they are the things
+that cost real tokens.
+
 
 ## Traps, with evidence
 
@@ -564,6 +658,10 @@ model or prompt changes, separately from correctness.
 | Repeat, new content | "play [song] on repeat" — must both play the right song AND set `repeat: "one"` in the same request |
 | Repeat, current, no target | "put this song on repeat" / "repeat this" — no room named; this is the exact phrasing that triggered defect #4 during this feature's own verification, see "Repeat" above |
 | Repeat, remove | "stop repeating" / "turn off repeat" |
+| Open-ended, from idle | "play some music" / "put something on" — must play something and set `radio_mode`, never ask what they want |
+| Open-ended, while playing | same phrasing, but with music already playing — **known to fail**, routes to resume instead; see "Open-ended playback" |
+| Open-ended, vibe | "play something like [artist]" — `radio_mode` true |
+| Specific request stays specific | "play the album [name]" — `radio_mode` must **not** be set; this is the over-triggering case |
 | Mangled recall | garbled version of a previously played item → maps to it |
 | Novel request | absent from the recall list → treated as new, **must not** bend |
 
@@ -927,6 +1025,23 @@ within a brand.
   not render even with recommended settings off; upstream bug. This is a
   leading suspect for the non-determinism above, which is why OpenRouter
   exists as an alternative path.
+- **LLM-curated tracklists ("DJ mode" stage 2).** Investigated alongside the
+  radio-mode passthrough above and deliberately deferred, not rejected. Prior
+  art exists and is worth reading before building: Music Assistant's own
+  **Don't Stop The Music** (auto-enables radio fill when the queue drains)
+  and its **Sonic Similarity** plugin (local audio analysis, works on
+  filesystem libraries where providers supply no similarity data), plus a
+  community integration that defines "stations" as text prompts, resolves
+  generated tracks through `music_assistant.play_media`, and refills on a
+  queue-low trigger. **That project's author started on DSTM and moved off
+  it** because it drifted and duplicated on niche stations — inherit that
+  negative result rather than re-deriving it. The two decisions already made
+  for a future stage 2, so they are not relitigated: suppress `music_played`
+  during a curated session (see "Open-ended playback" for why), and verify
+  each resolved candidate against what was asked before enqueuing it rather
+  than trusting the generated title. The open unknown is what fraction of a
+  generated batch survives that verification — measure it on the first batch
+  rather than guessing, since a strict match could starve the queue.
 - **An upstream `home-assistant/core` PR to expose Spotify's popularity
   field.** Investigated in full before the search/play redesign was chosen
   instead. Music Assistant's Spotify provider already parses `popularity`
