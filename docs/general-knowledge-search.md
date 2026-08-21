@@ -225,7 +225,11 @@ judgment, so it is probabilistic, and a case that routes correctly today can
 route differently tomorrow.** Any suite run has to check *whether* the
 escalation fired, not just whether the answer was good.
 
-### Open defect: "yesterday" is asserted without checking the date
+### Fixed: "yesterday" asserted without checking the date
+
+**Status: fixed 2026-08-21, 3 of 3 on the reproduction below.** The route to
+the fix matters more than the fix, because the defect was not where it
+appeared to be.
 
 **Found 2026-08-21, and this one is a genuine hard failure** — the shape the
 suite exists to catch, and the shape wrongly attributed to this system
@@ -247,14 +251,49 @@ existing instruction only requires an explicit date when the answer is "more
 than a few days away from today", so a result one or two days old slips
 through and gets called "yesterday".
 
-**Two lessons for the fix, neither of which is more prompt emphasis:**
-relative day-words are the failure surface, so the answer should carry the
-date it actually found rather than a word like "yesterday"; and "no event
-happened in that window" is a distinct answer the model currently reaches
-only sometimes, rather than a case it is required to consider.
+**The fix took two layers, and the second one is the finding.**
 
-Recorded rather than fixed, so the fix can be verified against a stated
-reproduction instead of a vague memory.
+Tier 2 was corrected first: banned from using relative day-words at all,
+required to name the date of whatever it found, told that "nothing happened
+on that day" is a complete answer, and forbidden from reporting a result for
+anything not yet finished. Asked directly, it then answered *correctly* —
+naming the date and the right result.
+
+**The spoken reply was still wrong.** Tier 1 was discarding the date while
+relaying. Which exposed something not previously understood about this
+architecture:
+
+> **Tier 1 paraphrases the escalated answer; it does not relay it verbatim.**
+
+That single fact explains two separate behaviours. It is why the narration
+leak disappeared when the tier-2 split was introduced — tier 1 was silently
+filtering the leaked preamble out, which was read at the time as the
+architecture solving the problem. And it is why a correct, fully-dated answer
+from tier 2 reached the user stripped of its date. The same mechanism, once
+helpful and once harmful, and it was only ever noticed because of the harm.
+
+Tier 1's instruction now forbids dropping a date, day, year, or qualifying
+phrase that the escalated answer contained, and equally forbids *adding* one
+it did not.
+
+**The lesson worth carrying:** in a two-model chain, testing the answering
+model in isolation is not testing the system. Tier 2 passed on its own and
+the user still got a wrong answer. Reproduce through the whole path, then
+bisect by calling each layer directly — that is what located this in minutes
+after prompt-level guessing had failed.
+
+### Reproduction, for checking future regressions
+
+Both require a day where the relevant fact makes them meaningful, so re-derive
+the ground truth before using them:
+
+1. Ask who won a team's game "yesterday" on a day that team **did not play**.
+   A correct reply names the date of the game it actually found and states
+   that there was none on the day asked about.
+2. Ask whether a team won "last night" when their next fixture has **not yet
+   kicked off**. A correct reply says they did not play, and does not invent
+   a score. This case previously produced a confident, entirely fabricated
+   scoreline.
 
 ## Regression suite
 
