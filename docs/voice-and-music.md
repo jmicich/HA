@@ -339,6 +339,37 @@ reports `radio: false`.
 | Track seed, both flags true | `items: 1`, `repeat_mode: one` | Radio correctly suppressed |
 | "play some music" via the real pipeline | `items: 38` | Model set the flag unprompted |
 
+**Pipeline run of 2026-08-21, 4 reps, verified by trace rather than reply.**
+Each rep was checked by reading `play_music`'s trace for the `radio_mode`
+the model actually passed, not by what it said out loud.
+
+| Rep | Utterance | Result |
+| --- | --- | --- |
+| 1 | "play some music" (from idle) | ✅ playlist seed, `radio_mode: true` |
+| 2 | "put something on" (**while already playing**) | ❌ called **no music tool at all** — see below |
+| 3 | "put something on" (from idle) | ✅ playlist seed, `radio_mode: true` |
+| 4 | "play something like the Beatles" | ✅ `radio_mode: true` |
+| 5 | "play the album Rumours by Fleetwood Mac" | ✅ `radio_mode` **not** passed, `radio: false` |
+
+**The one failure is a real, reproducible-shaped gap, not noise.** With music
+already playing, "put something on" fired neither `search_music` nor
+`play_music` — trace-confirmed, both scripts' `last_triggered` unchanged —
+so the model routed it to a built-in transport intent instead. The same
+utterance from idle worked. **The prompt's own ordering explains it:** the
+rule above the new one says bare transport controls apply when the request
+"names no content at all", and "put something on" names no content. The two
+rules overlap, and with music already playing the resume reading wins.
+
+Not fixed here, and worth stating precisely rather than as "the model
+ignored the rule": this is a rule-precedence collision inside the prompt,
+which is a different failure from defect #3b's "auxiliary signal never
+enters the decision". The obvious fix — an explicit carve-out saying an
+open-ended *request to start something* is never a resume — is untried, and
+per the "Repeat, no target" lesson above, the phrase list is the load-bearing
+part, so extend it rather than reasoning about it abstractly. **Rep 5 is the
+guard against over-correcting**: whatever is added must not start making
+specific album requests set `radio_mode`.
+
 **`radio` was added to the script's `result`, not just passed through.** Same
 reasoning as the `player` grounding fix above: the model cannot honestly say
 "it'll keep going" unless the tool tells it that it will. A prompt line
@@ -627,7 +658,8 @@ model or prompt changes, separately from correctness.
 | Repeat, new content | "play [song] on repeat" — must both play the right song AND set `repeat: "one"` in the same request |
 | Repeat, current, no target | "put this song on repeat" / "repeat this" — no room named; this is the exact phrasing that triggered defect #4 during this feature's own verification, see "Repeat" above |
 | Repeat, remove | "stop repeating" / "turn off repeat" |
-| Open-ended, no content | "play some music" / "put something on" — must play something and set `radio_mode`, never ask what they want |
+| Open-ended, from idle | "play some music" / "put something on" — must play something and set `radio_mode`, never ask what they want |
+| Open-ended, while playing | same phrasing, but with music already playing — **known to fail**, routes to resume instead; see "Open-ended playback" |
 | Open-ended, vibe | "play something like [artist]" — `radio_mode` true |
 | Specific request stays specific | "play the album [name]" — `radio_mode` must **not** be set; this is the over-triggering case |
 | Mangled recall | garbled version of a previously played item → maps to it |
