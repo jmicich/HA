@@ -13,10 +13,13 @@ The tier-1 agent sends a large, near-identical prefix on **every utterance in
 the house** — instructions, tool schemas, and the exposed-entity surface.
 Roughly 6,000 tokens, of which only a few hundred change between requests.
 
-Cached input costs a fraction of fresh input and prefills faster, so this is
-the exact shape prompt caching exists for. It is also the only optimisation
-available that removes *nothing*: trimming prose costs information, caching
-costs none.
+Cached input costs a fraction of fresh input, so this is the exact shape
+prompt caching exists for. It is also the only optimisation available that
+removes *nothing*: trimming prose costs information, caching costs none.
+
+**It is a cost optimisation, not a latency one — see "Measured result".**
+That distinction was not obvious in advance and is the main thing to carry
+away from this document.
 
 **Measured cache hit rate before any of this: 0.0%**, across hundreds of
 requests. Nothing was being cached at all.
@@ -75,15 +78,47 @@ breakdown split input tokens roughly:
 | Fresh input | ~10% |
 
 **Against a measured 0.0% before.** Cache reads bill at a fraction of fresh
-input and prefill faster, so this is the single largest efficiency change
-made to the assistant — and unlike the prompt trimming that preceded it, it
-removed nothing.
+input, so this is a large cost reduction — and unlike the prompt trimming
+that preceded it, it removed nothing.
 
 Two caveats to carry: cache *writes* are billed at a premium over fresh
 input, so a workload of one-off queries spread beyond the cache lifetime can
 cost more rather than less; and the cheap five-minute lifetime means the
 benefit concentrates in bursts of conversation rather than isolated commands.
 The numbers above come from ordinary mixed use, not a benchmark.
+
+### Negative result: no latency improvement
+
+Caching was pursued partly for speed. **It did not deliver any.** Tier-1
+decision latency, measured as the gap between the conversation starting and
+the first tool firing, on the same phrasing within the same few minutes:
+
+| | median | range |
+| --- | --- | --- |
+| Without caching | ~1.8s | 1.2–4.6s |
+| With ~80% cache reads | ~2.2s | 1.8–3.3s |
+
+Both are dominated by variance. The medians differ by less than the spread,
+so this shows no improvement and no regression — it shows *no effect*.
+
+**The reason, which should have been reasoned out beforehand:** prompt
+caching does not reduce what is sent. The whole prompt still uploads on every
+request; the provider skips *recomputing* over it. The saving is compute and
+billing, not transfer. At a few thousand tokens the prefill was never the
+bottleneck — network round trip and output generation dominate, and caching
+touches neither.
+
+**Method note, and a trap.** The first comparison used caching numbers from
+one day against non-caching numbers from the previous day, and appeared to
+show caching making things *2x slower*. Re-running both against the live
+system minutes apart erased the difference entirely. At this variance,
+cross-session latency comparisons are worthless; measure both arms together
+or not at all.
+
+**Where the latency actually is:** an escalated question is three sequential
+model calls, and nothing here changed that. See `general-knowledge-search.md`,
+which separately found that *removing* the escalation hop does not help
+either, because the search round trip dominates.
 
 ## Route B — patch the OpenRouter integration (pinned)
 
