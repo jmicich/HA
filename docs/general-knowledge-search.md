@@ -282,6 +282,52 @@ the user still got a wrong answer. Reproduce through the whole path, then
 bisect by calling each layer directly — that is what located this in minutes
 after prompt-level guessing had failed.
 
+### Open defect: a stale officeholder inside an otherwise-correct answer
+
+**Found 2026-08-21 by the list-invitation case, which is not what that case
+was built to test.** Asked to list every US president, the reply respected
+the length cap correctly — and then named the *previous* president as the
+current one, and gave a count one lower than the true figure.
+
+What makes this worth its own entry is the contrast. In the same run, asked
+directly who holds a local office, the answer was correct and current. The
+difference is what the question looks like: a "who holds this office now"
+question reads as current and gets searched, while a question that reads as
+settled history gets answered from the model's own knowledge — including the
+part of it that has since changed.
+
+**The prompt already warns about exactly this** ("officeholders change, so
+search rather than answering from memory"), and it did not help, because the
+model did not classify the question as one about the present. That is the
+gap: not a missing instruction, but a misread of which questions have a
+time-sensitive component buried in them.
+
+Untried and worth trying before anything more elaborate: requiring that any
+answer naming a current holder of anything be searched, regardless of how
+the question is phrased.
+
+### Related, found in the same run: the wrong speaker, reported as the right one
+
+Not a general-knowledge case, but recorded here because the run surfaced it
+and it touches this document's reporting rule.
+
+A request naming a room played on a speaker **in a different room**, and the
+spoken reply named the room the user had asked for rather than the one that
+actually played. The trace separates the two faults cleanly:
+
+- The model passed a speaker name that did not correspond to the room asked
+  for. The script then resolved and played exactly what it was told — this
+  is defect #4 in `voice-and-music.md`, not a script bug.
+- The script's response reported the speaker it really used. **Tier 1 said
+  the other one**, echoing the request instead of the returned value.
+
+The second half is a regression against a fix that was specifically made and
+verified earlier: the music scripts were given a `player` field in their
+response precisely so the reply could be grounded in it. The instruction to
+use it is still present and was still not followed. Both faults are in
+`voice-and-music.md`'s territory and need a full music-suite run against the
+current tier-1 agent, which remains outstanding.
+
 ### Reproduction, for checking future regressions
 
 Both require a day where the relevant fact makes them meaningful, so re-derive
