@@ -624,7 +624,7 @@ editable in the UI, so a future speaker can be excluded without touching YAML.
 | --- | --- | --- |
 | "play some jazz in the living room" | Living Room Speaker | 1, no retry |
 | "play some blues in the bedroom" | WiiM Mini-F834 | 1, no retry |
-| "play some jazz on the WiiM" | WiiM Mini-F834 | 2 — alias fails, guard retry succeeds |
+| "play some jazz on the WiiM" | WiiM | 1, no retry — after the rename below |
 | Guard payload, bogus name | puck absent; WiiM listed under Bedroom | — |
 
 **The standing rule this leaves:** *room targeting assumes one music speaker
@@ -633,18 +633,47 @@ arbitrary again and the fix is to label one of them `no_music` or to make the
 resolver prefer explicitly. Check this whenever a speaker is added or moved —
 it is now part of the speaker audit.
 
-**Aliases still do not resolve, and that is unchanged.** "WiiM", "the WiiM"
-and "WiiM Mini" are all `UNRESOLVED`; only the primary name
-`WiiM Mini-F834` matches directly. Saying "on the WiiM" works anyway because
-the guard catches it and the model retries from the paired list — one extra
-round trip, ~1.25s. To make it resolve first try, rename the entity's primary
-name to what people actually say and drop the aliases.
+### The alias problem has a one-line cure: make the name the alias
+
+Aliases are unresolvable from templates and always will be. But nothing
+forces a speaker to *have* aliases. The WiiM was named `WiiM Mini-F834` with
+aliases `WiiM` / `the WiiM` / `WiiM Mini` — so every string the model was
+shown was one the script could not resolve, and every request paid a guard
+round trip.
+
+**Renamed the entity's primary name to `WiiM` and cleared its aliases.** One
+registry edit, no code. Now the only string in play is one that resolves
+directly.
+
+| Value passed as `player` | Before | After |
+| --- | --- | --- |
+| `WiiM` | ❌ unresolved (alias) | ✅ direct name match |
+| `WiiM Mini-F834` | ✅ (primary name) | ❌ — no longer its name |
+| `the WiiM` | ❌ | ❌ still, exact match only |
+
+Verified 3 of 3 through the real pipeline, each a **single** `play_music`
+call with no fast-fail: "play some jazz on the WiiM" (trace confirms
+`p: "WiiM"` → `matched` by direct name, area fallback never reached), "put
+Fleetwood Mac on the WiiM", and "play Take Five in the bedroom".
+
+**The general recipe, worth applying to any speaker people name out loud:**
+set the entity's *primary name* to the words they actually say, and delete
+the aliases. An alias is a string the model will happily hand to a script
+that cannot resolve it. **The Living Room Speaker and Sonos 2 still have
+aliases** (`Sonos` / `the Sonos`, `the Era` / `dining room speaker`), so
+naming either of those out loud still costs a guard retry — the same edit
+would fix them, and has not been done.
+
+Note `the WiiM` still fails: matching is exact, not substring. It costs a
+guard retry and lands correctly, so it is a latency cost, not a correctness
+one. Observed behaviour is that the model passes the exact string it was
+shown, so this rarely fires.
 
 **Not captured by `export_ha.py`.** Area assignments, labels and the entity
 registry are not part of the exported `.storage` subset, so this change is
 reproducible only from this document, not from `ha_export/`. Re-deriving it
-after a restore means: WiiM in the Bedroom, `no_music` on the voice puck's MA
-player.
+after a restore means three registry edits: the WiiM in the Bedroom, named
+`WiiM` with no aliases, and `no_music` on the voice puck's MA player.
 
 ## Traps, with evidence
 
