@@ -458,7 +458,7 @@ from the tester's own knowledge.
 | L2 | Explicit elsewhere | ✅ Correct | used Tokyo, not home, and stated the date |
 | V2 | Narration | ✅ | no "let me search" preamble in any reply |
 | C1 | Multi-turn follow-up | ✅ | "who was **their** manager?" resolved to the Dodgers correctly, despite tier 2 being stateless |
-| L1 | Implicit local | ❌ **Fail** | see below |
+| L1 | Implicit local | ❌ **Fail** at run time, **fixed same day** | see below |
 | V1 | List invitation | ❌ **Wrong** | see below |
 | F2/F3/D1/D2 | Officeholder, volatile, dates | — | not run as separate cases; date discipline was exercised incidentally and produced one Wrong, below |
 
@@ -503,7 +503,63 @@ passes on its own criterion (the pronoun resolved correctly), but this is worth
 knowing — **a wrong date in turn one becomes a wrong date in every later turn**,
 because tier 1 forwards its own earlier answer as context.
 
-#### L1: tier 1 refuses to escalate the questions only tier 2 can answer
+#### L1 — FIXED 2026-08-24
+
+**Two distinct failures hid under one case, and only one of them was the
+refusal.** Fixing the refusal alone would have left the other in place.
+
+- *"anything fun happening around here this weekend?"* was answered from the
+  **Home calendar**. The prompt said "the Home calendar is the default for
+  reading and creating events", and "anything happening this weekend" reads
+  as an events question. Nothing distinguished the household's own diary from
+  what is on in town.
+- *"are there any concerts or festivals near us this weekend?"* was **refused
+  for want of a location**, which tier 1 genuinely does not have.
+
+**Verified first that escalating would actually help**, rather than assuming
+it: `zone.home` has latitude and longitude set, and tier 2 called directly
+with a local question resolved the city and returned real events. Without
+that check the fix would have been a routing change to a dead end.
+
+**Two prompt edits, one per failure:**
+
+- A local-questions rule in the escalation section: *"You do not know where
+  this house is, and you do not need to: the research tool does. Never reply
+  that you lack location information, and never ask which city or area to
+  check."*
+- The calendar section now says what the calendar **is** — the household's own
+  events — and that local goings-on are never on it.
+
+**Verified, four cases, two of each:**
+
+| Utterance | Before | After |
+| --- | --- | --- |
+| "concerts or festivals near us this weekend?" | ❌ asked which city | ✅ escalates, real dated events |
+| "anything fun happening around here this weekend?" | ❌ answered from the calendar | ✅ escalates, real dated events |
+| "what's on my calendar this weekend?" | ✅ | ✅ still the calendar, no escalation |
+| "do I have anything on tomorrow?" | not tested | ✅ still the calendar, no escalation |
+
+**The generalisable point:** tier 1 declined because it correctly assessed its
+own context and incorrectly assumed the answer had to come from there. A
+delegating layer needs to be told that *not knowing is a reason to forward,
+not a reason to refuse* — that does not follow on its own from a list of
+topics to escalate.
+
+**Two things observed while fixing this, neither addressed:**
+
+- **The narration leak is alive in tier 2.** Called directly, it replied
+  *"I'll search for concerts and festivals happening near Pittsburgh this
+  weekend."* immediately followed by the answer, with no separating space.
+  This document records that leak as having died with the tier split. It did
+  not — it is merely invisible in normal use, because tier 1 paraphrases
+  rather than relaying verbatim. V2 still passes end to end. It would surface
+  the moment tier 1 is told to relay tier 2 word for word.
+- **A four-item list slipped past the three-item cap.** "What's going on in
+  town tonight?" returned four events. Within the 45-word limit, and a list of
+  events is not the "list every X" shape V1 targets, but it is over the stated
+  item cap and sits in the same family as the V1 failure above.
+
+#### Historical: what the failure looked like
 
 Two phrasings, both failed, neither escalated:
 
