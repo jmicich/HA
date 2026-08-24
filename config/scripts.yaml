@@ -47,13 +47,22 @@ play_music:
     then:
     - variables:
         err:
-          error: No speaker is named '{{ p }}'. Nothing was played. Retry using one
-            of the exact speaker names listed.
-          valid_speaker_names: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''name'') | list }}'
-          valid_rooms: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''entity_id'') | map(''area_name'') | select(''string'')
-            | unique | list }}'
+          error: No speaker is named '{{ p }}'. Nothing was played. Each entry
+            below gives a speaker's exact name AND the room it is in. Retry with
+            the name whose room matches the room the user asked for - do not pick
+            by which name looks most like '{{ p }}'. If no listed room matches,
+            say that room has no speaker instead of substituting another.
+          speakers: '{%- set ns = namespace(items=[]) -%}
+
+            {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') -%}
+
+            {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
+            | default(''no room assigned'', true)}] -%}
+
+            {%- endfor -%}
+
+            {{ ns.items }}'
     - stop: Unknown speaker
       response_variable: err
   - action: music_assistant.play_media
@@ -123,7 +132,11 @@ play_music:
         text:
     player:
       name: Player
-      description: Which speaker to play on. Omit to use the Living Room Speaker.
+      description: Which speaker to play on. When the user named a ROOM, pass the
+        room's name ("living room", "dining room") - that is the most reliable
+        form and resolves to the speaker in that room. When they named a specific
+        speaker, pass the name you see for it. Omit entirely when they named
+        neither; that uses the Living Room Speaker.
       required: false
       selector:
         entity:
@@ -525,13 +538,22 @@ clarify_music_choice:
     then:
     - variables:
         err:
-          error: No speaker is named '{{ p }}'. Nothing was played. Retry using one
-            of the exact speaker names listed.
-          valid_speaker_names: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''name'') | list }}'
-          valid_rooms: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''entity_id'') | map(''area_name'') | select(''string'')
-            | unique | list }}'
+          error: No speaker is named '{{ p }}'. Nothing was played. Each entry
+            below gives a speaker's exact name AND the room it is in. Retry with
+            the name whose room matches the room the user asked for - do not pick
+            by which name looks most like '{{ p }}'. If no listed room matches,
+            say that room has no speaker instead of substituting another.
+          speakers: '{%- set ns = namespace(items=[]) -%}
+
+            {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') -%}
+
+            {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
+            | default(''no room assigned'', true)}] -%}
+
+            {%- endfor -%}
+
+            {{ ns.items }}'
     - stop: Unknown speaker
       response_variable: err
   - alias: Ask the question
@@ -910,7 +932,11 @@ start_dj_session:
         text: null
     player:
       name: Player
-      description: Which speaker to play on. Omit to use the Living Room Speaker.
+      description: Which speaker to play on. When the user named a ROOM, pass the
+        room's name ("living room", "dining room") - that is the most reliable
+        form and resolves to the speaker in that room. When they named a specific
+        speaker, pass the name you see for it. Omit entirely when they named
+        neither; that uses the Living Room Speaker.
       required: false
       selector:
         entity:
@@ -966,10 +992,22 @@ start_dj_session:
     then:
     - variables:
         err:
-          error: No speaker is named '{{ p }}'. No session was started. Retry using
-            one of the exact speaker names listed.
-          valid_speaker_names: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''name'') | list }}'
+          error: No speaker is named '{{ p }}'. No session was started. Each entry
+            below gives a speaker's exact name AND the room it is in. Retry with
+            the name whose room matches the room the user asked for - do not pick
+            by which name looks most like '{{ p }}'. If no listed room matches,
+            say that room has no speaker instead of substituting another.
+          speakers: '{%- set ns = namespace(items=[]) -%}
+
+            {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') -%}
+
+            {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
+            | default(''no room assigned'', true)}] -%}
+
+            {%- endfor -%}
+
+            {{ ns.items }}'
     - stop: Unknown speaker
       response_variable: err
   - alias: Record the session, resolving the speaker once so it cannot drift mid-session

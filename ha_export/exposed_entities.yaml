@@ -12,6 +12,10 @@ exposed_entities:
     assistants:
       cloud.alexa:
         should_expose: false
+  script.zz_dj_probe:
+    assistants:
+      cloud.alexa:
+        should_expose: false
   sun.sun:
     assistants:
       conversation:

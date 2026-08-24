@@ -849,7 +849,8 @@ model or prompt changes, separately from correctness.
 | Genre | "play some [genre]" |
 | Playlist by name | "play my [name] playlist" |
 | Room with a speaker | "play [artist] in the [room]" |
-| Named device | "play [artist] on the [device]" |
+| Named device | "play [artist] on the [device]" — including a device whose primary name the model does not surface; it must call the tool and use the guard, not refuse |
+| Named room, both rooms | "play X in the [room]" for **each** room that has a speaker — a fix that biases every request to one room passes the first and fails the second |
 | STT variant | mangled artist name, as speech-to-text would garble it |
 | Room with no speaker | must refuse, not substitute |
 | Nonsense query | must not fuzzy-match to real content |
@@ -1156,7 +1157,8 @@ and single-run tests cannot distinguish "broken" from "unlucky".
 routed artist intent straight to a streaming artist URI, reintroducing the
 rate-limit hang. Artist intent must resolve via playlist/album.
 
-4. **The model sometimes hallucinates a `player` value that doesn't exist**,
+4. **Wrong speaker for a named room — FIXED 2026-08-24.** Recorded until now
+   as "the model hallucinates a `player` value that doesn't exist",
    even when the user named no room or device at all. Confirmed via trace
    evidence: on one query, two consecutive attempts passed plausible-but-
    nonexistent entity-id-shaped strings, both correctly refused by the
@@ -1266,22 +1268,67 @@ rate-limit hang. Artist intent must resolve via playlist/album.
    from an error message with a room it guessed, because the two lists in the
    guard arrive unrelated to each other.
 
-   **The fixes this points at, in order of cost:**
+   **FIXED 2026-08-24, in three parts. 3 of 3 on the case that was 1 of 3.**
 
-   - **Return pairs, not two lists.** `valid_speaker_names` and `valid_rooms`
-     should be one list of `{name, room}`. Cheap, local to the guard, and
-     removes the step-5 guess entirely.
-   - **Put the pairing in the prompt's reach.** The prompt tells the model to
-     "work out which room each is in from the media player entities you can
-     see". If what it can see is alias-only, that instruction cannot be
-     followed — either expose the pairing or stop asking for it.
-   - **Accept aliases at the script.** Templates cannot read aliases, but the
-     *area* fallback could be widened, or the alias→entity map could be
-     injected into the prompt where it is readable.
+   The fix had to cover three distinct points in the chain, because fixing
+   only one leaves the other two intact:
 
-   **Do not treat "the model invents targets" as the description of this
-   defect any more.** That framing survived four reproductions and sent every
-   previous fix at the guard, which was working correctly the whole time.
+   1. **The guard returns pairs.** `valid_speaker_names` and `valid_rooms` —
+      two lists with no relationship between them — are replaced by a single
+      `speakers` list of `{name, room}`. The error text now says explicitly
+      *"Retry with the name whose room matches the room the user asked for -
+      do not pick by which name looks most like '<what you tried>'"*, because
+      picking by string similarity is precisely how it reached "Sonos 2".
+      Applied to `play_music`, `clarify_music_choice` and `start_dj_session`,
+      which all carry the same guard.
+
+   2. **The prompt stopped forbidding the one input that works.** This is the
+      part that fixes the *first* attempt rather than the retry. Measured
+      directly with `ha_eval_template` against the live resolver:
+
+      | Value passed as `player` | Resolves to |
+      | --- | --- |
+      | `living room` / `the living room` | ✅ the Living Room speaker |
+      | `dining room` | ✅ the Dining Room speaker |
+      | `Sonos` (the alias the model sees) | ❌ unresolved |
+      | `the Era` (ditto) | ❌ unresolved |
+
+      **Room names resolve perfectly.** The area-name fallback was added
+      deliberately for exactly this (see "Area name is the real fix surface"
+      in the traps section) — and the prompt said *"never pass a room name,
+      nickname or alias"*, steering the model away from the only form that
+      works. The prompt and the script had been contradicting each other.
+      The rule is now the reverse: when the user names a room, pass the room.
+
+   3. **The guard has to be reachable.** With 1 and 2 live, "play … on Sonos
+      2" still failed — the model refused *without calling any tool at all*,
+      so a better guard could never be consulted. Added: *"If the user names
+      a speaker you do not recognise, do NOT refuse and do NOT ask which one
+      they mean. Call Play Music with the name they used anyway… Only say a
+      speaker does not exist after a script has actually told you so."*
+
+   **Verified, by trace and by player state, not by the spoken reply:**
+
+   | Case | Before | After |
+   | --- | --- | --- |
+   | "play Fleetwood Mac in the living room" ×3 | 1 pass, 2 wrong room | ✅ **3 of 3**, each a single call with `player: "living room"`, no guard fire, no retry |
+   | "play Take Five in the dining room" | not tested | ✅ resolved to the Dining Room speaker — the fix is not a living-room bias |
+   | "play the album Rumours on Sonos 2" | ❌ refused a valid speaker, twice | ✅ plays on the Dining Room speaker |
+   | Guard payload, called directly with a bogus name | two unpaired lists | ✅ `[{name, room}, …]`, nothing played |
+
+   **What this does not do.** It does not make aliases resolvable — that is
+   still a platform limitation. It routes around them by making the room the
+   preferred input and by letting the guard correct anything else. A speaker
+   whose alias is *not* a room reference and whose primary name the user does
+   not know is still reachable only via the guard's retry.
+
+   **The lesson worth carrying:** this defect survived four reproductions and
+   several fixes aimed at the guard because it was described as "the model
+   invents targets". It never invented anything. It passed the only name it
+   had been shown, into a field documented to accept a different kind of name,
+   and was then handed a list with the one piece of information it needed
+   (which room) stripped out. **When a model keeps making the same "mistake",
+   check what it can actually see before hardening the thing that rejects it.**
 
    **The structural fix this points at, not yet built:** `play_music`
    resolves a *room* to its speakers today only when `player` is omitted. If
