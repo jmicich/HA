@@ -573,6 +573,108 @@ characters and the tool schemas rather more. If DJ mode goes unused,
 un-exposing the three scripts is the lever, exactly as it was for
 `clarify_music_choice`.
 
+### Room targeting is only as good as one-speaker-per-room
+
+Added 2026-08-24, immediately after the defect #4 fix above made room names
+the **preferred** way to target a speaker. That fix has a precondition it did
+not state, and the precondition was not true.
+
+**The area fallback returns the first matching player it iterates, not the
+best one.** With one music player per room that is unambiguous. The Living
+Room had three: the Living Room Speaker, the WiiM, and the Home Assistant
+Voice puck's Music Assistant player. `states.media_player` iteration order is
+not stable across reloads, so which one "living room" resolved to changed
+between two measurements hours apart on the same day:
+
+| When | `resolve('living room')` |
+| --- | --- |
+| During the defect #4 fix | `media_player.living_room` — correct, 3 of 3 |
+| Later the same day | `media_player.home_assistant_voice_0a9a69` — **the voice puck** |
+
+Nothing changed in config between those. The WiiM came back from
+`unavailable`, the candidate list re-ordered, and a passing case silently
+became a failing one. **The defect #4 suite result was therefore luck as much
+as fix** — worth knowing before trusting a green run on this path.
+
+**Note where the fault is not:** the puck is *not* exposed to the
+conversation agent, so the model never asked for it. The model correctly
+passed "living room". The script chose the puck. This is a resolver bug, not
+a model bug — the opposite of every previous speaker defect here.
+
+**Fix, in two parts:**
+
+1. **One music speaker per room.** The WiiM moved to the Bedroom (it had
+   physically moved; the registry still said Living Room). Rooms now hold
+   exactly one music player each.
+2. **A `no_music` label, and the resolver skips it.** Some Music Assistant
+   players are not things anyone wants music on — a voice satellite is a
+   mono puck for talking to. The `no_music` label marks them, and
+   `play_music`, `clarify_music_choice` and `start_dj_session` all filter it
+   out of both the candidate list *and* the guard's speaker list, so an
+   excluded player can never be resolved to and is never offered as a retry.
+
+Labels were chosen because they are **template-readable** (`label_entities()`
+works, verified before building on it — the mistake `music-recall-memory.md`
+records was designing around tooling that could not do what was assumed) and
+editable in the UI, so a future speaker can be excluded without touching YAML.
+
+**Verified after the change:**
+
+| Request | Resolves to | Calls |
+| --- | --- | --- |
+| "play some jazz in the living room" | Living Room Speaker | 1, no retry |
+| "play some blues in the bedroom" | WiiM Mini-F834 | 1, no retry |
+| "play some jazz on the WiiM" | WiiM | 1, no retry — after the rename below |
+| Guard payload, bogus name | puck absent; WiiM listed under Bedroom | — |
+
+**The standing rule this leaves:** *room targeting assumes one music speaker
+per room.* If a room ever gains a second, "play in that room" becomes
+arbitrary again and the fix is to label one of them `no_music` or to make the
+resolver prefer explicitly. Check this whenever a speaker is added or moved —
+it is now part of the speaker audit.
+
+### The alias problem has a one-line cure: make the name the alias
+
+Aliases are unresolvable from templates and always will be. But nothing
+forces a speaker to *have* aliases. The WiiM was named `WiiM Mini-F834` with
+aliases `WiiM` / `the WiiM` / `WiiM Mini` — so every string the model was
+shown was one the script could not resolve, and every request paid a guard
+round trip.
+
+**Renamed the entity's primary name to `WiiM` and cleared its aliases.** One
+registry edit, no code. Now the only string in play is one that resolves
+directly.
+
+| Value passed as `player` | Before | After |
+| --- | --- | --- |
+| `WiiM` | ❌ unresolved (alias) | ✅ direct name match |
+| `WiiM Mini-F834` | ✅ (primary name) | ❌ — no longer its name |
+| `the WiiM` | ❌ | ❌ still, exact match only |
+
+Verified 3 of 3 through the real pipeline, each a **single** `play_music`
+call with no fast-fail: "play some jazz on the WiiM" (trace confirms
+`p: "WiiM"` → `matched` by direct name, area fallback never reached), "put
+Fleetwood Mac on the WiiM", and "play Take Five in the bedroom".
+
+**The general recipe, worth applying to any speaker people name out loud:**
+set the entity's *primary name* to the words they actually say, and delete
+the aliases. An alias is a string the model will happily hand to a script
+that cannot resolve it. **The Living Room Speaker and Sonos 2 still have
+aliases** (`Sonos` / `the Sonos`, `the Era` / `dining room speaker`), so
+naming either of those out loud still costs a guard retry — the same edit
+would fix them, and has not been done.
+
+Note `the WiiM` still fails: matching is exact, not substring. It costs a
+guard retry and lands correctly, so it is a latency cost, not a correctness
+one. Observed behaviour is that the model passes the exact string it was
+shown, so this rarely fires.
+
+**Not captured by `export_ha.py`.** Area assignments, labels and the entity
+registry are not part of the exported `.storage` subset, so this change is
+reproducible only from this document, not from `ha_export/`. Re-deriving it
+after a restore means three registry edits: the WiiM in the Bedroom, named
+`WiiM` with no aliases, and `no_music` on the voice puck's MA player.
+
 ## Traps, with evidence
 
 **Artist-type playback triggers unbounded enumeration.** MA fans out API
@@ -852,7 +954,7 @@ model or prompt changes, separately from correctness.
 | Named device | "play [artist] on the [device]" — including a device whose primary name the model does not surface; it must call the tool and use the guard, not refuse |
 | Named room, both rooms | "play X in the [room]" for **each** room that has a speaker — a fix that biases every request to one room passes the first and fails the second |
 | STT variant | mangled artist name, as speech-to-text would garble it |
-| Room with no speaker | must refuse, not substitute |
+| Room with no speaker | must refuse, not substitute. **Use the Kitchen or the Attic** — the Bedroom gained a speaker on 2026-08-24 and is no longer empty |
 | Nonsense query | must not fuzzy-match to real content |
 | Pause, no target | |
 | Pause, with target | |
@@ -1417,6 +1519,13 @@ Regenerate everything this doc no longer states:
   `platform == "music_assistant"`; an unavailable one still counts and loses
   its attributes, so do not filter on attributes.
 - **Areas and floors** — `ha_list_floors_areas`
+- **That every room still has exactly one music speaker** — group the MA
+  players by `area_name` after removing anything labelled `no_music`. Two in
+  one room makes "play in that room" arbitrary; see "Room targeting is only
+  as good as one-speaker-per-room".
+- **What the `no_music` label currently excludes** — `label_entities('no_music')`.
+  Area assignments and labels are **not** in `ha_export/`, so this is the only
+  record of them.
 - **Conversation agents that exist** — the `conversation` domain in the
   state machine
 - **Which agent and wake word each pipeline uses** — `ha_manage_pipeline`

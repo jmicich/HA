@@ -11,7 +11,8 @@ play_music:
     variables:
       p: '{{ player | default('''', true) | string }}'
       matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
-        ''defined'') | list -%}
+        ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music''))
+        | list -%}
 
         {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
         | list) + (candidates | selectattr(''name'', ''eq'', p) | map(attribute=''entity_id'')
@@ -55,7 +56,7 @@ play_music:
           speakers: '{%- set ns = namespace(items=[]) -%}
 
             {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') -%}
+            ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music'')) -%}
 
             {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
             | default(''no room assigned'', true)}] -%}
@@ -504,7 +505,8 @@ clarify_music_choice:
     variables:
       p: '{{ player | default('''', true) | string }}'
       matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
-        ''defined'') | list -%}
+        ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music''))
+        | list -%}
 
         {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
         | list) + (candidates | selectattr(''name'', ''eq'', p) | map(attribute=''entity_id'')
@@ -546,7 +548,7 @@ clarify_music_choice:
           speakers: '{%- set ns = namespace(items=[]) -%}
 
             {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') -%}
+            ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music'')) -%}
 
             {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
             | default(''no room assigned'', true)}] -%}
@@ -958,7 +960,8 @@ start_dj_session:
     variables:
       p: '{{ player | default('''', true) | string }}'
       matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
-        ''defined'') | list -%}
+        ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music''))
+        | list -%}
 
         {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
         | list) + (candidates | selectattr(''name'', ''eq'', p) | map(attribute=''entity_id'')
@@ -1000,7 +1003,7 @@ start_dj_session:
           speakers: '{%- set ns = namespace(items=[]) -%}
 
             {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') -%}
+            ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music'')) -%}
 
             {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
             | default(''no room assigned'', true)}] -%}
