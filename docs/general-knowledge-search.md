@@ -459,10 +459,88 @@ from the tester's own knowledge.
 | V2 | Narration | ✅ | no "let me search" preamble in any reply |
 | C1 | Multi-turn follow-up | ✅ | "who was **their** manager?" resolved to the Dodgers correctly, despite tier 2 being stateless |
 | L1 | Implicit local | ❌ **Fail** at run time, **fixed same day** | see below |
-| V1 | List invitation | ❌ **Wrong** | see below |
+| V1 | List invitation | ❌ **Wrong** at run time, **fixed same day** | see below; took two attempts |
 | F2/F3/D1/D2 | Officeholder, volatile, dates | — | not run as separate cases; date discipline was exercised incidentally and produced one Wrong, below |
 
-#### V1 is a hard failure, and it is the case the prompt was hardened for
+#### V1 — FIXED 2026-08-24, and the first fix was aimed at the wrong thing
+
+**Attempt 1 (failed): tighten the output shape.** The existing rule was the
+last clause of the word-cap bullet and was purely prohibitive — "never recite
+a list of more than three items" — with nothing about where the number should
+come from. Replaced with its own section giving an explicit template
+(`"<number> <things>, including <first>, <second> and <third>." … then STOP`),
+a rule that the number must come from the search, and a self-consistency
+check naming the exact previous failure.
+
+Result: *"**Thirteen** teams have won a Super Bowl:"* followed by thirteen
+names. Better shaped — the count now matched its own list — but still over the
+cap and **still Wrong**, because the true figure is 20. Two prompt attempts on
+this case had now failed.
+
+**Attempt 2 (worked): make the search mandatory.** The tell was in the
+failure itself. "Thirteen" is not a mis-copied search result; it is a
+*remembered* number. The model was confident, so it never searched — the
+existing search rule says to search what you "do not already know with
+certainty", and it was certain. Added, at the top of the section:
+
+> ANY question asking for a list, a total, a count, or "every"/"all" of
+> something REQUIRES a web search before you answer - even when you are
+> completely certain you already know. Being certain is not evidence…
+
+| Rep | Utterance | Result |
+| --- | --- | --- |
+| 1 | "list every team that has won a Super Bowl" | ✅ **20**, five real examples |
+| 2 | "name all the teams that have ever won a Super Bowl" | ✅ **Twenty**, five real examples |
+| 3 | "how many different teams have won a Super Bowl?" | ✅ "Twenty different teams have won a Super Bowl." |
+
+Ground truth (20) from a dated search at test time, not from the tester's
+knowledge. **Wrong → Correct, 3 of 3.**
+
+**The same fix closed the wrong-year defect below**, without being aimed at
+it. "Who won the most recent World Series?" previously answered *"in 2024"*;
+it now answers *"the 2025 World Series"*. Both failures were the same thing —
+answering a checkable fact from memory — wearing different clothes. **The
+lesson: when a model states a wrong number confidently, ask whether it looked
+it up at all before rewriting the rules about how to phrase the answer.**
+
+**Residual, not fixed and deliberately not chased further:**
+
+- **The three-item cap is still bent.** Reps 1 and 2 named five, and trailed
+  "and others" / "and fourteen others" — the exact continuation the template
+  forbids. Within the 45-word limit and no longer fabricating, so it scores
+  Correct, but the cap is guidance the model rounds off rather than a rule it
+  obeys.
+- **One off-by-one.** "Twenty… and fourteen others" after naming five is 19,
+  not 20. The self-consistency instruction did not catch it.
+- Both are cosmetic against the fabrication this case existed to catch. A
+  third prompt attempt for style, on a case where two attempts were needed to
+  fix correctness, is not a good trade. If it matters later, the untried
+  structural route is to have tier 1 rewrite "list every X" into "how many X
+  are there?" before forwarding, which removes the enumeration opportunity
+  instead of forbidding it.
+
+#### Trap: an omitted key in a subentry reconfigure is not a preserved key
+
+Caught during this fix, and it is a safety-relevant trap rather than a
+cosmetic one.
+
+Tier 2's stored data held only `model` and `web_search` — no `llm_hass_api`,
+deliberately, because **tier 2 must not have house tools** (see "Why this
+shape"). Writing the new prompt without mentioning `llm_hass_api` did not
+leave it absent: the reconfigure flow applied the field's **schema default**,
+which is `["assist"]`. Tier 2 silently gained the ability to control the
+house.
+
+Caught only because the write is verified by reading `.storage` back and
+diffing *every* key, not just the one being changed. Fixed by passing
+`llm_hass_api: []` explicitly, which restores the key to absent.
+
+**Rule for any future subentry write: pass every field you want to keep,
+including the ones you are not changing, and read back all of them
+afterwards.** "I only changed the prompt" is not true of a flow that
+re-submits the whole form.
+
+#### How the failure looked before the fix
 
 Asked to "list every team that has won a Super Bowl", the reply was **~60
 words reciting 23 team names**, opening with "Seventeen teams have won Super
@@ -484,7 +562,7 @@ reason to read it out."* That amendment is live and did not hold. Scored
 **Wrong** rather than merely verbose, because the fabricated winners and the
 wrong total are confident and specific.
 
-#### A wrong year on an otherwise correct answer
+#### A wrong year on an otherwise correct answer — FIXED by the same change
 
 "Who won the most recent World Series?" returned: *"The Los Angeles Dodgers won
 the most recent World Series **in 2024**, defeating the Toronto Blue Jays 4
