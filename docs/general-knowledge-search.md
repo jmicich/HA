@@ -437,6 +437,227 @@ Repetition guidance: run the fabrication-prone cases (F3, A1, A2) at least
 three times — a single clean pass proved nothing in this project's history.
 The rest are stable at one run.
 
+### Run of 2026-08-24 — after the DJ-session work
+
+Occasioned by tier-1 prompt changes for radio mode and DJ sessions, which
+invalidate this suite even though none of them touch escalation. Ground truth
+for every factual case came from a narrow dated search run at test time, never
+from the tester's own knowledge.
+
+| # | Case | Score | Note |
+| --- | --- | --- | --- |
+| R1 | Routes out | ✅ | escalation fired |
+| R2 | Routes local — music | ✅ | every music case in the parallel suite fired music scripts, no escalation |
+| R3 | Routes local — house state | ✅ | answered from live state |
+| F1 | Stable post-cutoff fact | ✅ Correct | Seahawks 29–13 over the Patriots, 8 Feb 2026 — matches search exactly, and it volunteered the date unprompted |
+| F4 | Static knowledge | — | not run |
+| A1 | Fictional entities | ✅ Abstained | asked which league rather than inventing a score |
+| A2 | Future event | ✅ Correct | said the 2027 game has not been played, gave the scheduled date, invented no winner |
+| A3 | Unknowable / private | ✅ Correct | declined without speculating |
+| A4 | False premise | ✅ Correct | corrected Cowboys/Stanley Cup and offered the Dallas Stars |
+| L2 | Explicit elsewhere | ✅ Correct | used Tokyo, not home, and stated the date |
+| V2 | Narration | ✅ | no "let me search" preamble in any reply |
+| C1 | Multi-turn follow-up | ✅ | "who was **their** manager?" resolved to the Dodgers correctly, despite tier 2 being stateless |
+| L1 | Implicit local | ❌ **Fail** at run time, **fixed same day** | see below |
+| V1 | List invitation | ❌ **Wrong** at run time, **fixed same day** | see below; took two attempts |
+| F2/F3/D1/D2 | Officeholder, volatile, dates | — | not run as separate cases; date discipline was exercised incidentally and produced one Wrong, below |
+
+#### V1 — FIXED 2026-08-24, and the first fix was aimed at the wrong thing
+
+**Attempt 1 (failed): tighten the output shape.** The existing rule was the
+last clause of the word-cap bullet and was purely prohibitive — "never recite
+a list of more than three items" — with nothing about where the number should
+come from. Replaced with its own section giving an explicit template
+(`"<number> <things>, including <first>, <second> and <third>." … then STOP`),
+a rule that the number must come from the search, and a self-consistency
+check naming the exact previous failure.
+
+Result: *"**Thirteen** teams have won a Super Bowl:"* followed by thirteen
+names. Better shaped — the count now matched its own list — but still over the
+cap and **still Wrong**, because the true figure is 20. Two prompt attempts on
+this case had now failed.
+
+**Attempt 2 (worked): make the search mandatory.** The tell was in the
+failure itself. "Thirteen" is not a mis-copied search result; it is a
+*remembered* number. The model was confident, so it never searched — the
+existing search rule says to search what you "do not already know with
+certainty", and it was certain. Added, at the top of the section:
+
+> ANY question asking for a list, a total, a count, or "every"/"all" of
+> something REQUIRES a web search before you answer - even when you are
+> completely certain you already know. Being certain is not evidence…
+
+| Rep | Utterance | Result |
+| --- | --- | --- |
+| 1 | "list every team that has won a Super Bowl" | ✅ **20**, five real examples |
+| 2 | "name all the teams that have ever won a Super Bowl" | ✅ **Twenty**, five real examples |
+| 3 | "how many different teams have won a Super Bowl?" | ✅ "Twenty different teams have won a Super Bowl." |
+
+Ground truth (20) from a dated search at test time, not from the tester's
+knowledge. **Wrong → Correct, 3 of 3.**
+
+**The same fix closed the wrong-year defect below**, without being aimed at
+it. "Who won the most recent World Series?" previously answered *"in 2024"*;
+it now answers *"the 2025 World Series"*. Both failures were the same thing —
+answering a checkable fact from memory — wearing different clothes. **The
+lesson: when a model states a wrong number confidently, ask whether it looked
+it up at all before rewriting the rules about how to phrase the answer.**
+
+**Residual, not fixed and deliberately not chased further:**
+
+- **The three-item cap is still bent.** Reps 1 and 2 named five, and trailed
+  "and others" / "and fourteen others" — the exact continuation the template
+  forbids. Within the 45-word limit and no longer fabricating, so it scores
+  Correct, but the cap is guidance the model rounds off rather than a rule it
+  obeys.
+- **One off-by-one.** "Twenty… and fourteen others" after naming five is 19,
+  not 20. The self-consistency instruction did not catch it.
+- Both are cosmetic against the fabrication this case existed to catch. A
+  third prompt attempt for style, on a case where two attempts were needed to
+  fix correctness, is not a good trade. If it matters later, the untried
+  structural route is to have tier 1 rewrite "list every X" into "how many X
+  are there?" before forwarding, which removes the enumeration opportunity
+  instead of forbidding it.
+
+#### Trap: an omitted key in a subentry reconfigure is not a preserved key
+
+Caught during this fix, and it is a safety-relevant trap rather than a
+cosmetic one.
+
+Tier 2's stored data held only `model` and `web_search` — no `llm_hass_api`,
+deliberately, because **tier 2 must not have house tools** (see "Why this
+shape"). Writing the new prompt without mentioning `llm_hass_api` did not
+leave it absent: the reconfigure flow applied the field's **schema default**,
+which is `["assist"]`. Tier 2 silently gained the ability to control the
+house.
+
+Caught only because the write is verified by reading `.storage` back and
+diffing *every* key, not just the one being changed. Fixed by passing
+`llm_hass_api: []` explicitly, which restores the key to absent.
+
+**Rule for any future subentry write: pass every field you want to keep,
+including the ones you are not changing, and read back all of them
+afterwards.** "I only changed the prompt" is not true of a flow that
+re-submits the whole form.
+
+#### How the failure looked before the fix
+
+Asked to "list every team that has won a Super Bowl", the reply was **~60
+words reciting 23 team names**, opening with "Seventeen teams have won Super
+Bowls".
+
+Three separate faults in one answer:
+
+- **The count contradicts its own list** — it says seventeen, then names 23.
+- **The count is wrong.** A dated search puts it at **20** franchises.
+- **Several named teams have never won one** (Arizona Cardinals, Atlanta
+  Falcons, Tennessee Titans), and the Rams are double-counted as both "Los
+  Angeles Rams" and "St. Louis Rams".
+
+It also breaks the 45-word cap and the "never recite a list of more than three
+items" rule outright. **This is the exact behaviour the tier-2 prompt was
+amended for**, with the bolded clause *"This applies just as much when you have
+searched and have the complete list in front of you: having the data is not a
+reason to read it out."* That amendment is live and did not hold. Scored
+**Wrong** rather than merely verbose, because the fabricated winners and the
+wrong total are confident and specific.
+
+#### A wrong year on an otherwise correct answer — FIXED by the same change
+
+"Who won the most recent World Series?" returned: *"The Los Angeles Dodgers won
+the most recent World Series **in 2024**, defeating the Toronto Blue Jays 4
+games to 3 … extra innings in the decisive Game 7."*
+
+Everything except the year is right. A dated search puts that Game 7 on **1
+November 2025**. Scored **Wrong** under this suite's rule — confident,
+specific, incorrect — and it is the failure class this document already calls
+the most common one. Note the shape: not a *dropped* date, which the prompt
+guards against at length, but a *wrong* one, which it does not address
+directly.
+
+The error then propagated: the C1 follow-up answered "Dave Roberts was the
+Dodgers manager in the 2024 World Series", inheriting the bad year. C1 still
+passes on its own criterion (the pronoun resolved correctly), but this is worth
+knowing — **a wrong date in turn one becomes a wrong date in every later turn**,
+because tier 1 forwards its own earlier answer as context.
+
+#### L1 — FIXED 2026-08-24
+
+**Two distinct failures hid under one case, and only one of them was the
+refusal.** Fixing the refusal alone would have left the other in place.
+
+- *"anything fun happening around here this weekend?"* was answered from the
+  **Home calendar**. The prompt said "the Home calendar is the default for
+  reading and creating events", and "anything happening this weekend" reads
+  as an events question. Nothing distinguished the household's own diary from
+  what is on in town.
+- *"are there any concerts or festivals near us this weekend?"* was **refused
+  for want of a location**, which tier 1 genuinely does not have.
+
+**Verified first that escalating would actually help**, rather than assuming
+it: `zone.home` has latitude and longitude set, and tier 2 called directly
+with a local question resolved the city and returned real events. Without
+that check the fix would have been a routing change to a dead end.
+
+**Two prompt edits, one per failure:**
+
+- A local-questions rule in the escalation section: *"You do not know where
+  this house is, and you do not need to: the research tool does. Never reply
+  that you lack location information, and never ask which city or area to
+  check."*
+- The calendar section now says what the calendar **is** — the household's own
+  events — and that local goings-on are never on it.
+
+**Verified, four cases, two of each:**
+
+| Utterance | Before | After |
+| --- | --- | --- |
+| "concerts or festivals near us this weekend?" | ❌ asked which city | ✅ escalates, real dated events |
+| "anything fun happening around here this weekend?" | ❌ answered from the calendar | ✅ escalates, real dated events |
+| "what's on my calendar this weekend?" | ✅ | ✅ still the calendar, no escalation |
+| "do I have anything on tomorrow?" | not tested | ✅ still the calendar, no escalation |
+
+**The generalisable point:** tier 1 declined because it correctly assessed its
+own context and incorrectly assumed the answer had to come from there. A
+delegating layer needs to be told that *not knowing is a reason to forward,
+not a reason to refuse* — that does not follow on its own from a list of
+topics to escalate.
+
+**Two things observed while fixing this, neither addressed:**
+
+- **The narration leak is alive in tier 2.** Called directly, it replied
+  *"I'll search for concerts and festivals happening near Pittsburgh this
+  weekend."* immediately followed by the answer, with no separating space.
+  This document records that leak as having died with the tier split. It did
+  not — it is merely invisible in normal use, because tier 1 paraphrases
+  rather than relaying verbatim. V2 still passes end to end. It would surface
+  the moment tier 1 is told to relay tier 2 word for word.
+- **A four-item list slipped past the three-item cap.** "What's going on in
+  town tonight?" returned four events. Within the 45-word limit, and a list of
+  events is not the "list every X" shape V1 targets, but it is over the stated
+  item cap and sits in the same family as the V1 failure above.
+
+#### Historical: what the failure looked like
+
+Two phrasings, both failed, neither escalated:
+
+- *"anything fun happening around here this weekend?"* → answered from the
+  **Home calendar** ("Nothing on the calendar for this weekend").
+- *"are there any concerts or festivals happening near us this weekend?"* →
+  *"I don't have your location information. Which city should I check?"*
+
+The second is the diagnostic one. **Tier 1 is correct that it has no location —
+the coordinates live in tier 2's prompt.** Escalating is precisely what would
+have resolved the question, and tier 1's own prompt lists "local happenings"
+as an escalation trigger. It short-circuits on the missing location instead of
+forwarding.
+
+**Fix this at the routing rule, not by giving tier 1 coordinates.** Tier 1
+never needs to know where the house is; it needs to know that not knowing is
+not a reason to decline. Something like: *"Never answer a local question by
+asking which city — you are not the layer that knows, and the research tool
+is. Forward it."* Untried.
+
 ## How to audit this
 
 - **Which models both tiers use** — read the OpenRouter config entry's

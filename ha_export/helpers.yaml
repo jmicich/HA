@@ -2,9 +2,37 @@
 # Backup and review artifact only — this is NOT deployed by sync_config.py,
 # and editing it does not change the live instance.
 # Secrets are redacted; re-read the diff before committing anyway.
+input_boolean:
+- icon: mdi:disc-player
+  id: dj_session_active
+  name: DJ Session Active
 input_select:
+- icon: mdi:history
+  id: dj_session_history
+  name: DJ Session History
+  options:
+  - (none)
 - icon: mdi:music-note-eighth
   id: music_recall
   name: Music Recall
   options:
   - (none)
+input_text:
+- icon: mdi:playlist-music
+  id: dj_session_brief
+  max: 255
+  min: 0
+  mode: text
+  name: DJ Session Brief
+- icon: mdi:speaker
+  id: dj_session_player
+  max: 255
+  min: 0
+  mode: text
+  name: DJ Session Player
+timer:
+- duration: '1:00:00'
+  icon: mdi:timer-music
+  id: dj_session
+  name: DJ Session
+  restore: false

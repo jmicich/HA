@@ -89,6 +89,19 @@ def live(tmp_path):
          "options": ["(none)"]},
     ]})
 
+    # A feature can spread its state across several helper domains, each in
+    # its own .storage file. Exporting only input_select would capture such a
+    # feature by halves.
+    write_storage(root, "input_boolean", {"items": [
+        {"id": "dj_session_active", "name": "DJ Session Active"},
+    ]})
+    write_storage(root, "input_text", {"items": [
+        {"id": "dj_session_brief", "name": "DJ Session Brief", "max": 255},
+    ]})
+    write_storage(root, "timer", {"items": [
+        {"id": "dj_session", "name": "DJ Session", "duration": "1:00:00"},
+    ]})
+
     write_storage(root, "assist_pipeline.pipelines", {
         "preferred_item": "01PIPE",
         "items": [{"id": "01PIPE", "name": "Voice", "tts_voice": "en_GB-jenny",
@@ -231,6 +244,26 @@ def test_input_select_definition_is_exported_verbatim(live):
     assert item["name"] == "Music Recall"
     assert item["options"] == ["(none)"]
     assert item["icon"] == "mdi:history"
+
+
+def test_every_helper_domain_is_exported_not_just_input_select(live):
+    """A feature spanning several helper domains must be captured whole.
+
+    The exporter originally handled input_select only, so the DJ session's
+    boolean, text and timer helpers were silently absent from the backup —
+    a gap that reads as "nothing to back up" rather than as an omission.
+    """
+    doc = yaml.safe_load(export_ha.render(live)["helpers.yaml"])
+    assert doc["input_boolean"][0]["name"] == "DJ Session Active"
+    assert doc["input_text"][0]["max"] == 255
+    assert doc["timer"][0]["duration"] == "1:00:00"
+
+
+def test_absent_helper_domains_are_omitted_rather_than_emitted_empty(live):
+    """Most installs use a handful of domains; the rest must not add noise."""
+    doc = yaml.safe_load(export_ha.render(live)["helpers.yaml"])
+    assert "counter" not in doc
+    assert "input_number" not in doc
 
 
 def test_export_is_deterministic(live):

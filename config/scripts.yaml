@@ -47,13 +47,22 @@ play_music:
     then:
     - variables:
         err:
-          error: No speaker is named '{{ p }}'. Nothing was played. Retry using one
-            of the exact speaker names listed.
-          valid_speaker_names: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''name'') | list }}'
-          valid_rooms: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''entity_id'') | map(''area_name'') | select(''string'')
-            | unique | list }}'
+          error: No speaker is named '{{ p }}'. Nothing was played. Each entry
+            below gives a speaker's exact name AND the room it is in. Retry with
+            the name whose room matches the room the user asked for - do not pick
+            by which name looks most like '{{ p }}'. If no listed room matches,
+            say that room has no speaker instead of substituting another.
+          speakers: '{%- set ns = namespace(items=[]) -%}
+
+            {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') -%}
+
+            {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
+            | default(''no room assigned'', true)}] -%}
+
+            {%- endfor -%}
+
+            {{ ns.items }}'
     - stop: Unknown speaker
       response_variable: err
   - action: music_assistant.play_media
@@ -123,7 +132,11 @@ play_music:
         text:
     player:
       name: Player
-      description: Which speaker to play on. Omit to use the Living Room Speaker.
+      description: Which speaker to play on. When the user named a ROOM, pass the
+        room's name ("living room", "dining room") - that is the most reliable
+        form and resolves to the speaker in that room. When they named a specific
+        speaker, pass the name you see for it. Omit entirely when they named
+        neither; that uses the Living Room Speaker.
       required: false
       selector:
         entity:
@@ -525,13 +538,22 @@ clarify_music_choice:
     then:
     - variables:
         err:
-          error: No speaker is named '{{ p }}'. Nothing was played. Retry using one
-            of the exact speaker names listed.
-          valid_speaker_names: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''name'') | list }}'
-          valid_rooms: '{{ states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | map(attribute=''entity_id'') | map(''area_name'') | select(''string'')
-            | unique | list }}'
+          error: No speaker is named '{{ p }}'. Nothing was played. Each entry
+            below gives a speaker's exact name AND the room it is in. Retry with
+            the name whose room matches the room the user asked for - do not pick
+            by which name looks most like '{{ p }}'. If no listed room matches,
+            say that room has no speaker instead of substituting another.
+          speakers: '{%- set ns = namespace(items=[]) -%}
+
+            {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') -%}
+
+            {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
+            | default(''no room assigned'', true)}] -%}
+
+            {%- endfor -%}
+
+            {{ ns.items }}'
     - stop: Unknown speaker
       response_variable: err
   - alias: Ask the question
@@ -680,3 +702,464 @@ ask_general_knowledge:
       required: true
       selector:
         text:
+dj_queue_tracks:
+  alias: DJ Queue Tracks
+  description: Internal worker for DJ sessions - generates a tracklist, verifies each
+    candidate actually resolves to what was asked for, and queues the survivors. Not
+    exposed to Assist; called by start_dj_session and steer_dj_session.
+  icon: mdi:playlist-plus
+  mode: single
+  fields:
+    brief:
+      name: Brief
+      description: The station brief to generate against.
+      required: true
+      selector:
+        text: null
+    player:
+      name: Player
+      description: Already-resolved target speaker entity id.
+      required: true
+      selector:
+        text: null
+    enqueue_mode:
+      name: Enqueue mode
+      description: replace for a new session, replace_next to steer without cutting
+        off the current track.
+      required: false
+      selector:
+        select:
+          options:
+          - replace
+          - replace_next
+    count:
+      name: Count
+      description: How many tracks to ask for.
+      required: false
+      selector:
+        number:
+          min: 4
+          max: 20
+          mode: box
+  sequence:
+  - alias: Generate a candidate tracklist
+    action: ai_task.generate_data
+    data:
+      task_name: dj session tracklist
+      entity_id: ai_task.openai_ai_task
+      instructions: >-
+        Choose {{ count | default(10, true) }} real songs for background listening
+        in a home, matching this brief: {{ brief }}
+
+        The brief accumulates as the listener steers, so parts of it may conflict.
+        Later instructions always win over earlier ones. If a later part replaces
+        the genre or mood outright ("instead", "actually make it", "switch to"),
+        drop the earlier direction completely rather than blending the two.
+
+        Rules. Every song must genuinely exist and be by the artist you name - never
+        invent a title, and never pair a real title with an artist who did not record
+        it. Vary the artists: at most two songs by any one artist. Prefer the
+        original studio recording over live versions, covers, remixes and karaoke.
+        Do not add qualifiers like "(Instrumental)" or "(Remastered)" to a title -
+        name the track as the catalogue does, or pick a different track.
+
+        Already used in this session - do not choose any of these again:
+        {{ (state_attr('input_select.dj_session_history', 'options') | default([], true)) | reject('eq', '(none)') | join('; ') }}
+
+        Return only the structured data.
+      structure:
+        tracks:
+          selector:
+            object:
+              multiple: true
+              fields:
+                artist:
+                  selector:
+                    text: null
+                  required: true
+                title:
+                  selector:
+                    text: null
+                  required: true
+          description: The chosen songs
+          required: true
+    response_variable: gen
+  - alias: Resolve and verify each candidate
+    repeat:
+      for_each: '{{ gen.data.tracks | default([], true) }}'
+      sequence:
+      - action: music_assistant.search
+        data:
+          config_entry_id: 01KZTNVHAVM54QQGJJ22W5DP43
+          name: '{{ repeat.item.title }}'
+          artist: '{{ repeat.item.artist }}'
+          media_type:
+          - track
+        response_variable: hit
+      - alias: Accept only a candidate that matches the title AND the artist asked for
+        variables:
+          picked: >-
+            {%- macro nrm(s) -%}
+            {{- s | default('', true) | lower | trim | regex_replace('[^a-z0-9 ]', '') | regex_replace('\s+', ' ') | trim -}}
+            {%- endmacro -%}
+            {%- set want_t = nrm(repeat.item.title) -%}
+            {%- set want_a = nrm(repeat.item.artist) -%}
+            {%- set pool = (hit.tracks | default([], true)) | rejectattr('uri', 'search', '^bbc_sounds') | list -%}
+            {%- set ranked = (pool | selectattr('uri','search','^library') | list) + (pool | selectattr('uri','search','^spotify') | list) + (pool | selectattr('uri','search','^apple_music') | list) + pool -%}
+            {%- set ns = namespace(found='') -%}
+            {%- for it in ranked -%}
+            {%- if ns.found == '' -%}
+            {%- set got_t = nrm(it.name) -%}
+            {%- set got_a = nrm(it.artists | default([], true) | map(attribute='name') | join(' ')) -%}
+            {%- if want_t != '' and want_a != '' and (got_t == want_t or got_t.startswith(want_t)) and want_a in got_a -%}
+            {%- set ns.found = it.uri -%}
+            {%- endif -%}
+            {%- endif -%}
+            {%- endfor -%}
+            {{ ns.found }}
+      - alias: Accumulate survivors and casualties separately
+        variables:
+          uris: '{{ (uris | default([], true)) + ([picked] if picked != '''' else []) }}'
+          dropped: '{{ (dropped | default([], true)) + ([] if picked != '''' else [repeat.item.artist
+            ~ '' - '' ~ repeat.item.title]) }}'
+      - alias: Start playback on the first survivor rather than after the whole loop
+        if:
+        - condition: template
+          value_template: '{{ picked != '''' and (uris | default([], true)) | length
+            == 1 and (enqueue_mode | default(''replace'', true)) == ''replace'' }}'
+        then:
+        - action: music_assistant.play_media
+          target:
+            entity_id: '{{ player }}'
+          data:
+            media_id: '{{ [picked] }}'
+            media_type: track
+            enqueue: '{{ enqueue_mode | default(''replace'', true) }}'
+            radio_mode: false
+      - alias: Space the provider calls so a batch does not trip the rate limiter
+        delay:
+          milliseconds: 150
+  - alias: Refuse to play anything if nothing survived verification
+    if:
+    - condition: template
+      value_template: '{{ (uris | default([], true)) | length == 0 }}'
+    then:
+    - variables:
+        err:
+          error: Nothing from the generated tracklist could be verified against the
+            music library, so nothing was played.
+          generated: '{{ (gen.data.tracks | default([], true)) | length }}'
+          dropped: '{{ dropped | default([], true) }}'
+    - stop: Nothing verified
+      response_variable: err
+  - alias: Queue the batch, arming radio fill as the end-of-session backstop
+    choose:
+    - alias: Steering - replace the whole up-next run in one call
+      conditions:
+      - condition: template
+        value_template: '{{ (enqueue_mode | default(''replace'', true)) == ''replace_next''
+          }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ player }}'
+        data:
+          media_id: '{{ uris }}'
+          media_type: track
+          enqueue: replace_next
+          radio_mode: false
+    - alias: New session - the first survivor is already playing, queue the rest behind it
+      conditions:
+      - condition: template
+        value_template: '{{ (uris | default([], true)) | length > 1 }}'
+      sequence:
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ player }}'
+        data:
+          media_id: '{{ uris[1:] }}'
+          media_type: track
+          enqueue: add
+          radio_mode: true
+  - alias: Remember what was used so a steer or refill does not repeat it
+    action: input_select.set_options
+    target:
+      entity_id: input_select.dj_session_history
+    data:
+      options: >-
+        {%- set fresh = (gen.data.tracks | default([], true)) | map(attribute='artist') | list -%}
+        {%- set titles = (gen.data.tracks | default([], true)) | map(attribute='title') | list -%}
+        {%- set ns = namespace(items=[]) -%}
+        {%- for i in range(titles | length) -%}
+        {%- set ns.items = ns.items + [fresh[i] ~ ' - ' ~ titles[i]] -%}
+        {%- endfor -%}
+        {%- set prior = (state_attr('input_select.dj_session_history', 'options') | default([], true)) | reject('eq', '(none)') | list -%}
+        {%- set ns2 = namespace(out=[]) -%}
+        {%- for x in (ns.items + prior) -%}
+        {%- if x not in ns2.out -%}
+        {%- set ns2.out = ns2.out + [x] -%}
+        {%- endif -%}
+        {%- endfor -%}
+        {{ ns2.out[:60] if ns2.out | length > 0 else ['(none)'] }}
+  - variables:
+      result:
+        queued: '{{ (uris | default([], true)) | length }}'
+        generated: '{{ (gen.data.tracks | default([], true)) | length }}'
+        dropped: '{{ (dropped | default([], true)) | length }}'
+        dropped_titles: '{{ dropped | default([], true) }}'
+        backstop: '{{ (uris | default([], true)) | length > 1 }}'
+  - stop: Batch queued
+    response_variable: result
+start_dj_session:
+  alias: Start DJ Session
+  description: Start a DJ session - open-ended, curated listening where you pick the
+    music for a while. Use this when the request describes a vibe, mood, era, activity
+    or constraint rather than naming one specific thing to play ("be my DJ", "put on
+    something for dinner", "70s soul but nothing slow", "music for working"). Do NOT
+    use it when the user named a specific song, album, artist or playlist - use Search
+    Music and Play Music for those. Resolves the speaker once, up front, and keeps
+    using it for the whole session.
+  icon: mdi:disc-player
+  mode: single
+  fields:
+    brief:
+      name: Brief
+      description: A short description of the music wanted, in your own words, capturing
+        every constraint the user gave - genre, mood, era, energy, activity, and anything
+        they said to avoid. Do not name a single specific song unless they did.
+      required: true
+      selector:
+        text: null
+    player:
+      name: Player
+      description: Which speaker to play on. When the user named a ROOM, pass the
+        room's name ("living room", "dining room") - that is the most reliable
+        form and resolves to the speaker in that room. When they named a specific
+        speaker, pass the name you see for it. Omit entirely when they named
+        neither; that uses the Living Room Speaker.
+      required: false
+      selector:
+        entity:
+          domain: media_player
+          integration: music_assistant
+    duration_minutes:
+      name: Duration minutes
+      description: How long to play for, in minutes, only if the user gave a length
+        ("for an hour", "for the next 20 minutes"). Omit if they did not - the session
+        then runs until they stop it.
+      required: false
+      selector:
+        number:
+          min: 5
+          max: 480
+          mode: box
+  sequence:
+  - alias: Resolve target player
+    variables:
+      p: '{{ player | default('''', true) | string }}'
+      matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
+        ''defined'') | list -%}
+
+        {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
+        | list) + (candidates | selectattr(''name'', ''eq'', p) | map(attribute=''entity_id'')
+        | list) -%}
+
+        {%- set ns = namespace(found=(direct | first | default('''', true))) -%}
+
+        {%- if ns.found == '''' and p != '''' -%}
+
+        {%- for c in candidates -%}
+
+        {%- set an = area_name(c.entity_id) -%}
+
+        {%- if ns.found == '''' and an and (an | lower) in (p | lower) -%}
+
+        {%- set ns.found = c.entity_id -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {%- endif -%}
+
+        {{ ns.found }}'
+      target_player: '{{ matched if matched != '''' else ''media_player.living_room''
+        }}'
+  - alias: Fail loudly if a named speaker did not resolve
+    if:
+    - condition: template
+      value_template: '{{ p != '''' and matched == '''' }}'
+    then:
+    - variables:
+        err:
+          error: No speaker is named '{{ p }}'. No session was started. Each entry
+            below gives a speaker's exact name AND the room it is in. Retry with
+            the name whose room matches the room the user asked for - do not pick
+            by which name looks most like '{{ p }}'. If no listed room matches,
+            say that room has no speaker instead of substituting another.
+          speakers: '{%- set ns = namespace(items=[]) -%}
+
+            {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
+            ''defined'') -%}
+
+            {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
+            | default(''no room assigned'', true)}] -%}
+
+            {%- endfor -%}
+
+            {{ ns.items }}'
+    - stop: Unknown speaker
+      response_variable: err
+  - alias: Record the session, resolving the speaker once so it cannot drift mid-session
+    action: input_text.set_value
+    target:
+      entity_id: input_text.dj_session_player
+    data:
+      value: '{{ target_player }}'
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.dj_session_brief
+    data:
+      value: '{{ brief[:255] }}'
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.dj_session_active
+  - alias: Start from a clean history so a new session may reuse earlier favourites
+    action: input_select.set_options
+    target:
+      entity_id: input_select.dj_session_history
+    data:
+      options:
+      - (none)
+  - alias: Arm the stop timer only when a length was actually given
+    if:
+    - condition: template
+      value_template: '{{ duration_minutes | default(0, true) | int > 0 }}'
+    then:
+    - action: timer.start
+      target:
+        entity_id: timer.dj_session
+      data:
+        duration: '{{ (duration_minutes | int) * 60 }}'
+    else:
+    - action: timer.cancel
+      target:
+        entity_id: timer.dj_session
+  - alias: Generate, verify and queue the first batch
+    action: script.dj_queue_tracks
+    data:
+      brief: '{{ brief }}'
+      player: '{{ target_player }}'
+      enqueue_mode: replace
+      count: 12
+    response_variable: q
+  - variables:
+      result:
+        started: '{{ q.queued | default(0, true) > 0 }}'
+        brief: '{{ brief }}'
+        queued: '{{ q.queued | default(0, true) }}'
+        dropped: '{{ q.dropped | default(0, true) }}'
+        minutes: '{{ duration_minutes | default(0, true) | int }}'
+        player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
+          true) }}'
+        error: '{{ q.error | default('''', true) }}'
+  - stop: Session started
+    response_variable: result
+steer_dj_session:
+  alias: Steer DJ Session
+  description: Adjust the music a DJ session is playing, without starting a new one.
+    Use this when a session is already running and the user asks for a change of direction
+    rather than a specific song ("less mellow", "more upbeat", "nothing with vocals",
+    "no more Motown"). The track playing now finishes; everything queued after it is
+    replaced. Only works while a session is active - if none is, say so instead of
+    starting one.
+  icon: mdi:tune-vertical
+  mode: single
+  fields:
+    adjustment:
+      name: Adjustment
+      description: What the user wants changed, in their own words ("less mellow",
+        "no more Motown").
+      required: true
+      selector:
+        text: null
+  sequence:
+  - alias: Refuse if no session is running
+    if:
+    - condition: template
+      value_template: '{{ not is_state(''input_boolean.dj_session_active'', ''on'') }}'
+    then:
+    - variables:
+        err:
+          error: No DJ session is running, so there is nothing to steer. Nothing was
+            changed.
+    - stop: No session
+      response_variable: err
+  - alias: Amend the brief rather than replacing it, so earlier constraints survive
+    variables:
+      new_brief: '{{ ((states(''input_text.dj_session_brief'') ~ ''; '' ~ adjustment)
+        | trim)[:255] }}'
+      session_player: '{{ states(''input_text.dj_session_player'') }}'
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.dj_session_brief
+    data:
+      value: '{{ new_brief }}'
+  - alias: Replace what is queued after the current track
+    action: script.dj_queue_tracks
+    data:
+      brief: '{{ new_brief }}'
+      player: '{{ session_player }}'
+      enqueue_mode: replace_next
+      count: 12
+    response_variable: q
+  - variables:
+      result:
+        steered: '{{ q.queued | default(0, true) > 0 }}'
+        brief: '{{ new_brief }}'
+        queued: '{{ q.queued | default(0, true) }}'
+        dropped: '{{ q.dropped | default(0, true) }}'
+        player: '{{ state_attr(session_player, ''friendly_name'') | default(session_player,
+          true) }}'
+        error: '{{ q.error | default('''', true) }}'
+  - stop: Session steered
+    response_variable: result
+stop_dj_session:
+  alias: Stop DJ Session
+  description: End a running DJ session and pause the music. Use this for "stop the
+    DJ", "that's enough music", "stop DJing". It pauses playback and clears the session,
+    so nothing more is queued. It takes no fields - never ask which speaker.
+  icon: mdi:stop-circle-outline
+  mode: single
+  sequence:
+  - variables:
+      was_active: '{{ is_state(''input_boolean.dj_session_active'', ''on'') }}'
+      session_player: '{{ states(''input_text.dj_session_player'') }}'
+  - alias: Pause the speaker the session actually claimed, not a guessed one
+    if:
+    - condition: template
+      value_template: '{{ was_active and session_player | regex_search(''^media_player\.'')
+        }}'
+    then:
+    - action: media_player.media_pause
+      target:
+        entity_id: '{{ session_player }}'
+  - action: timer.cancel
+    target:
+      entity_id: timer.dj_session
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.dj_session_active
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.dj_session_brief
+    data:
+      value: ''
+  - variables:
+      result:
+        stopped: '{{ was_active }}'
+        player: '{{ state_attr(session_player, ''friendly_name'') | default('''', true)
+          if was_active else '''' }}'
+        note: '{{ ''No DJ session was running.'' if not was_active else '''' }}'
+  - stop: Session stopped
+    response_variable: result
