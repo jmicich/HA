@@ -886,8 +886,11 @@ flow, where the script *is* the entire response mechanism and there's no
 LLM paraphrasing step to override. **No known mechanism in this stack lets
 a script force its own wording into the spoken reply when called as an LLM
 tool.** The prompt-level grounding fix above (return the real data, instruct
-the model to use only that data) is therefore the ceiling of what's
-achievable here, not a stopgap on the way to something stronger — reflect
+the model to use only that data) is therefore the ceiling of what a *script*
+can do — **superseded 2026-08-24 by the `say` field, which is a strictly
+better version of the same prompt-level idea; see "The `say` field" below,
+including the custom-agent design that would make it structural** — not a
+stopgap on the way to something stronger — reflect
 that before promising a fully deterministic reply is possible without
 changing the architecture (e.g. dropping to a local hassil-matched intent
 for these specific commands, which is a materially bigger change and has
@@ -905,6 +908,101 @@ handed to it. This means the fix for defect #3's title-collision half (see
 more context pointing at the right answer isn't sufficient when literal
 text similarity points somewhere else. See Open Defects #3 for the current
 split.
+
+### The `say` field: stop asking the model to compose, ask it to repeat
+
+Added 2026-08-24. This is the third and best attempt at making the spoken
+reply match what actually happened. Read the two above it first — the
+`player` grounding fix and the `set_conversation_response` dead end — because
+this one only makes sense as a response to what both established.
+
+**The mismatch is not one problem, and scoping it is what made the fix
+obvious:**
+
+| Class | Example | Tool result available? |
+| --- | --- | --- |
+| A. Wrong fact about a real action | tool returned "Sonos 2", reply said "living room" | ✅ truth was there, unused |
+| B. False failure | reply says it failed, the track is verifiably playing | ✅ |
+| C. False success, **no tool fired** | bare "pause" claimed done, nothing was called (defect #2) | ❌ **none** |
+| D. Fabricated detail | added a room or a qualifier the tool never returned | partly |
+
+**C is the one that defeats every tool-side fix**, because there is no result
+to ground anything in. Keep that in mind before believing any claim that the
+mismatch is "solved".
+
+**What changed.** The previous design returned five structured fields
+(`played`, `kind`, `repeat`, `radio`, `player`) and a prompt rule saying
+*ground every reported fact in these*. That asks the model to **compose** a
+sentence from parts — and composition is where it drifts.
+
+Each script now also returns **`say`: one complete, pre-composed sentence**,
+built from the same resolved values the script actually used. The prompt rule
+became *speak the `say` field as your entire reply, word for word*. The ask
+shrinks from "compose a claim" to "repeat this sentence", which is a far
+smaller thing to get wrong.
+
+```
+say: "Now playing Rumours on Sonos 2."
+say: "Now playing Dreams on WiiM. It will keep playing similar music."
+say: "Repeat is on for Living Room Speaker."
+say: "DJ stopped."  /  "No DJ session was running."
+```
+
+**Errors deliberately have no `say`.** The guard's error is an instruction to
+*retry*, not something to read out. Giving it a `say` would make the model
+announce "no speaker is named X" instead of trying again, converting a
+self-healing path into a dead end. The prompt says: `say` present → speak it;
+`say` absent or empty → follow the `error`. `start_dj_session` and
+`steer_dj_session` render an empty `say` when nothing was queued, for the same
+reason.
+
+**Verified — the reply is byte-identical to the field, not merely similar:**
+
+| Utterance | `say` in the trace | Spoken reply |
+| --- | --- | --- |
+| "play the album Rumours in the dining room" | `Now playing Rumours on Sonos 2.` | `Now playing Rumours on Sonos 2.` |
+| "put this song on repeat" | `Repeat is on for Living Room Speaker.` | `Repeat is on for Living Room Speaker.` |
+| "stop the DJ" (none running) | `No DJ session was running.` | `No DJ session was running.` |
+
+**A wrong action became audible, which is the point.** The repeat test ran
+with *two* speakers playing, so `set_music_repeat` fell back to the default
+speaker rather than the one playing — and said "Living Room Speaker" out
+loud, which is exactly what it did. Under the old design the reply would have
+been composed around the song the user meant. The speech no longer disagrees
+with the action; a questionable action is now something you can hear.
+
+**What this does not do, stated plainly:**
+
+- **It is still probabilistic.** The model is still generating the final
+  utterance; it is merely being asked for a much easier thing. Expect it to
+  hold far more often, not always.
+- **Class C is untouched.** When no tool fires, there is no `say`, and
+  nothing here prevents a confident "done".
+- The three-item and word-cap style rules elsewhere show that prompt rules of
+  this kind get rounded off under pressure. Treat a green run as evidence,
+  not proof.
+
+**The structural answer, specified but not built.** Everything above is still
+prompt-mediated. Making it structural means the spoken text stops being
+*generated* and starts being *selected*: a custom conversation agent
+(`config/custom_components/`) that becomes the pipeline's agent, delegates to
+the existing LLM agent for routing and candidate judgment, and then — if one
+of our music scripts fired during the turn — **substitutes that script's
+`say` for the LLM's narration** before it reaches TTS. That closes A, B, C
+and D, because a claim can no longer be authored by the component that
+guesses.
+
+Two things make it more feasible than it sounds, both checked rather than
+assumed: `sync_config.py` filters by a DENY list rather than an allow list,
+so `config/custom_components/` deploys through the existing pipeline
+unchanged; and the repo already carries the testing convention for it
+(`tests/components/<domain>/`, `pytest-homeassistant-custom-component`).
+
+The risk is proportionate and worth stating before anyone starts: such an
+agent sits in the path of **every utterance in the house**, so a bug there
+takes out all voice control, not just music. `CLAUDE.md`'s intended layout
+also puts `custom_components/` at the top level, where HA would not load it —
+that needs reconciling first.
 
 ## Regression suite
 
@@ -962,6 +1060,7 @@ model or prompt changes, separately from correctness.
 | Repeat, new content | "play [song] on repeat" — must both play the right song AND set `repeat: "one"` in the same request |
 | Repeat, current, no target | "put this song on repeat" / "repeat this" — no room named; this is the exact phrasing that triggered defect #4 during this feature's own verification, see "Repeat" above |
 | Repeat, remove | "stop repeating" / "turn off repeat" |
+| Spoken reply matches the action | any successful music command — the spoken text must equal the script's `say` field **byte for byte**, checked against the trace, not merely be consistent with it |
 | Open-ended, from idle | "play some music" / "put something on" — must play something and set `radio_mode`, never ask what they want |
 | Open-ended, while playing | same phrasing, but with music already playing — **known to fail**, routes to resume instead; see "Open-ended playback" |
 | Open-ended, vibe | "play something like [artist]" — `radio_mode` true |
