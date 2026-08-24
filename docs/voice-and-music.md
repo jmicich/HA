@@ -732,7 +732,11 @@ reply admit it" case specifically — worth catching that combination
 specifically next time it's tested, rather than assuming the fix covers it
 by extension.
 
-**Now closed, 2026-08-21 — the combination finally landed.** The suite run
+**Reopened 2026-08-24 — see the counter-example at the end of this
+section. The paragraph below stands as an accurate account of the
+2026-08-21 run, but the conclusion it drew does not generalise.**
+
+**Closed 2026-08-21 — the combination landed once.** The suite run
 of that date caught the exact pairing this paragraph asked for: rep 3 of
 "play Fleetwood Mac in the living room" resolved to the Dining Room speaker,
 and the reply said *"Now playing Fleetwood Mac Radio on the Sonos."* The
@@ -742,6 +746,21 @@ asked for. Compare the pre-fix failure, where the same wrong-player
 situation was reported as the *right* room. The grounding fix therefore
 holds in the case it had never been observed in: it does not prevent
 mis-routing, but it stops mis-routing from being reported as success.
+
+**The counter-example, 2026-08-24.** Three reps of "play Fleetwood Mac in the
+living room". Rep 1 resolved correctly. Reps 2 and 3 both played on Sonos 2 in
+the Dining Room. Rep 2 reported *"Playing Fleetwood Mac Radio on the Sonos"* —
+grounded, and the failure was audible. **Rep 3 reported "Playing Fleetwood Mac
+Radio in the living room now"** while `play_music`'s trace shows it returned
+`player: "Sonos 2"`. Same prompt, same phrasing, same session, opposite
+reporting behaviour.
+
+So the grounding instruction is **probabilistic, not structural** — which is
+what this document says about every prompt-level guardrail at this model tier,
+and should have been the prior. The honest claim is: grounding makes
+mis-routing *usually* audible, and a listener cannot rely on hearing it. It
+does not convert a silent failure into a loud one; it converts it into a
+mostly-loud one.
 
 Worth stating what that means practically: **the wrong-room bug is now
 audible.** A listener hears the assistant name a room they didn't ask for,
@@ -915,6 +934,43 @@ Two things worth carrying forward:
   and resolves the speaker from whatever is currently playing, which is both
   closer to what "repeat *this*" means and removes this tool's exposure to
   defect #4 — but it was not what fixed the bug.
+
+### Run of 2026-08-24 — after the DJ-session work (stage 1 + stage 2)
+
+Full re-run of both suites, occasioned by the tier-1 prompt changes for radio
+mode and DJ sessions. Speaker inventory and room assignments audited first;
+Kitchen, Bedroom and Attic confirmed speakerless **by design**, so the
+empty-room cases are meaningful.
+
+| Case | Reps | Result |
+| --- | --- | --- |
+| Room with a speaker | 3 | ❌ **1 pass, 2 wrong room** — worse than 2026-08-21's 2/1; see defect #4's root cause |
+| Room with no speaker | 3 | ✅ refused all three, listed real alternatives, nothing played |
+| Nonsense query | 3 | ✅ abstained all three |
+| Named device ("play … on Sonos 2") | 2 | ❌ **refused a valid speaker both times** — "I don't see a speaker called Sonos 2". New case, and the clearest single symptom of the alias gap |
+| Song by artist | 1 | ✅ So What / Miles Davis, correct player |
+| Genre | 1 | ✅ Smooth Jazz Chill, radio armed |
+| STT variant | 1 | ✅ "flitwood mack" → Fleetwood Mac Radio |
+| Novel request | 1 | ✅ Hamilton cast recording, did not bend to the recall list |
+| Mangled recall | 1 | ❌ "Roomers" played literally — **7th consecutive negative**, defect 3b unchanged |
+| Pause, no target | 1 | ✅ actually paused, position preserved — defect #2 did **not** reproduce |
+| Resume, with target | 1 | ✅ position preserved across the pair |
+| Repeat, new content | 1 | ✅ Superstition + `repeat: one` in one request |
+| Repeat on / off, no target | 1 each | ✅ correct player, no asking |
+| Open-ended, from idle | 1 | ✅ radio armed |
+| Open-ended, while playing | 1 | ✅ **previously failing case now passes** — routed to search+play instead of resume. One rep; not proof it is fixed |
+| DJ start (with duration) | 1 | ✅ brief composed, player stored, timer armed |
+| DJ steer | 1 | ✅ current track preserved, queue truncated to 12, new batch queued |
+| DJ replace ("switch to X instead") | 1 | ✅ routed to `start`, brief clean, no blend |
+| DJ stop | 1 | ✅ paused, flag off, timer idle |
+| DJ steer with no session | 1 | ✅ refused, did not start one |
+
+**Not run:** playlist-by-name, song-with-no-artist, album-by-name on the
+default player, and second/third reps of every one-rep case above.
+
+**Housekeeping performed:** the mangled-recall rep logged "Roomers" into the
+recall list as it always does; it was removed afterwards and "Rumours" left
+intact, so the fixture is clean for the next run.
 
 ### Run of 2026-08-21 — after the tier-1 prompt slimming and cache migration
 
@@ -1162,6 +1218,70 @@ rate-limit hang. Artist intent must resolve via playlist/album.
    **Probabilistic at roughly 1-in-3 on this phrasing.** A single rep shows
    green; this is precisely why the suite mandates three. Do not conclude
    from one clean run that it is fixed.
+
+   **ROOT CAUSE FOUND, 2026-08-24. This defect is not the model "inventing" a
+   target. The model is passing exactly the name it was shown; the name it was
+   shown is not a name the script can resolve.**
+
+   Asked directly to list the speakers it can see, with tools disabled, tier 1
+   answers with **aliases, not primary names**:
+
+   | What the model sees | Room it reports | What it actually is |
+   | --- | --- | --- |
+   | "Sonos" | Living Room | alias of the Living Room Speaker |
+   | "Dining room speaker" / "the Era" / "Era 100" | Dining Room | alias of **Sonos 2** |
+   | "WiiM" / "WiiM Mini" | Living Room | alias of the WiiM |
+   | Justin's 3rd TV | none | its real name (it has no aliases) |
+
+   **The primary names never reach the model at all.** `play_music`'s `player`
+   field description says it accepts "ONLY the exact primary name of a Music
+   Assistant speaker entity" — it is asking for strings the model has never
+   been shown. Confirmed from the other direction too: asked to play "on
+   Sonos 2", tier 1 answers *"I don't see a speaker called Sonos 2 in your
+   home"* — and it is telling the truth about its own context.
+
+   The full failure chain, every step observed rather than inferred:
+
+   1. User says "in the living room". Model picks the alias it can see:
+      `player: "Sonos"`.
+   2. The script cannot match aliases — a platform limitation this document
+      already records (`entity_attr(id,'aliases')` does not exist).
+   3. The area-name fallback cannot save it either: it matches the *area name*
+      as a substring of the passed value, and "Sonos" contains no room name.
+   4. The fail-loud guard returns `valid_speaker_names` — **primary** names,
+      the ones the model has never seen — and `valid_rooms` as a **separate,
+      unpaired list**.
+   5. The model picks the entry that looks most like what it asked for:
+      **"Sonos 2"**. That is a real, valid speaker, so the guard accepts it.
+      It is in the **Dining Room**.
+
+   So the wrong-room outcome is not a coin flip. It is the guard's own error
+   payload steering the model to the nearest string, with no information about
+   which room any of those names is in. The 1-in-3 rate is how often step 3
+   fails, not how often the model "hallucinates".
+
+   **This also explains the model's confident wrong belief about the layout.**
+   In the same run it stated *"the speakers I can use are in the Living Room
+   (Sonos 2 and Living Room Speaker)"* — pairing a primary name it learned
+   from an error message with a room it guessed, because the two lists in the
+   guard arrive unrelated to each other.
+
+   **The fixes this points at, in order of cost:**
+
+   - **Return pairs, not two lists.** `valid_speaker_names` and `valid_rooms`
+     should be one list of `{name, room}`. Cheap, local to the guard, and
+     removes the step-5 guess entirely.
+   - **Put the pairing in the prompt's reach.** The prompt tells the model to
+     "work out which room each is in from the media player entities you can
+     see". If what it can see is alias-only, that instruction cannot be
+     followed — either expose the pairing or stop asking for it.
+   - **Accept aliases at the script.** Templates cannot read aliases, but the
+     *area* fallback could be widened, or the alias→entity map could be
+     injected into the prompt where it is readable.
+
+   **Do not treat "the model invents targets" as the description of this
+   defect any more.** That framing survived four reproductions and sent every
+   previous fix at the guard, which was working correctly the whole time.
 
    **The structural fix this points at, not yet built:** `play_music`
    resolves a *room* to its speakers today only when `player` is omitted. If

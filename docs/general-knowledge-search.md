@@ -437,6 +437,93 @@ Repetition guidance: run the fabrication-prone cases (F3, A1, A2) at least
 three times — a single clean pass proved nothing in this project's history.
 The rest are stable at one run.
 
+### Run of 2026-08-24 — after the DJ-session work
+
+Occasioned by tier-1 prompt changes for radio mode and DJ sessions, which
+invalidate this suite even though none of them touch escalation. Ground truth
+for every factual case came from a narrow dated search run at test time, never
+from the tester's own knowledge.
+
+| # | Case | Score | Note |
+| --- | --- | --- | --- |
+| R1 | Routes out | ✅ | escalation fired |
+| R2 | Routes local — music | ✅ | every music case in the parallel suite fired music scripts, no escalation |
+| R3 | Routes local — house state | ✅ | answered from live state |
+| F1 | Stable post-cutoff fact | ✅ Correct | Seahawks 29–13 over the Patriots, 8 Feb 2026 — matches search exactly, and it volunteered the date unprompted |
+| F4 | Static knowledge | — | not run |
+| A1 | Fictional entities | ✅ Abstained | asked which league rather than inventing a score |
+| A2 | Future event | ✅ Correct | said the 2027 game has not been played, gave the scheduled date, invented no winner |
+| A3 | Unknowable / private | ✅ Correct | declined without speculating |
+| A4 | False premise | ✅ Correct | corrected Cowboys/Stanley Cup and offered the Dallas Stars |
+| L2 | Explicit elsewhere | ✅ Correct | used Tokyo, not home, and stated the date |
+| V2 | Narration | ✅ | no "let me search" preamble in any reply |
+| C1 | Multi-turn follow-up | ✅ | "who was **their** manager?" resolved to the Dodgers correctly, despite tier 2 being stateless |
+| L1 | Implicit local | ❌ **Fail** | see below |
+| V1 | List invitation | ❌ **Wrong** | see below |
+| F2/F3/D1/D2 | Officeholder, volatile, dates | — | not run as separate cases; date discipline was exercised incidentally and produced one Wrong, below |
+
+#### V1 is a hard failure, and it is the case the prompt was hardened for
+
+Asked to "list every team that has won a Super Bowl", the reply was **~60
+words reciting 23 team names**, opening with "Seventeen teams have won Super
+Bowls".
+
+Three separate faults in one answer:
+
+- **The count contradicts its own list** — it says seventeen, then names 23.
+- **The count is wrong.** A dated search puts it at **20** franchises.
+- **Several named teams have never won one** (Arizona Cardinals, Atlanta
+  Falcons, Tennessee Titans), and the Rams are double-counted as both "Los
+  Angeles Rams" and "St. Louis Rams".
+
+It also breaks the 45-word cap and the "never recite a list of more than three
+items" rule outright. **This is the exact behaviour the tier-2 prompt was
+amended for**, with the bolded clause *"This applies just as much when you have
+searched and have the complete list in front of you: having the data is not a
+reason to read it out."* That amendment is live and did not hold. Scored
+**Wrong** rather than merely verbose, because the fabricated winners and the
+wrong total are confident and specific.
+
+#### A wrong year on an otherwise correct answer
+
+"Who won the most recent World Series?" returned: *"The Los Angeles Dodgers won
+the most recent World Series **in 2024**, defeating the Toronto Blue Jays 4
+games to 3 … extra innings in the decisive Game 7."*
+
+Everything except the year is right. A dated search puts that Game 7 on **1
+November 2025**. Scored **Wrong** under this suite's rule — confident,
+specific, incorrect — and it is the failure class this document already calls
+the most common one. Note the shape: not a *dropped* date, which the prompt
+guards against at length, but a *wrong* one, which it does not address
+directly.
+
+The error then propagated: the C1 follow-up answered "Dave Roberts was the
+Dodgers manager in the 2024 World Series", inheriting the bad year. C1 still
+passes on its own criterion (the pronoun resolved correctly), but this is worth
+knowing — **a wrong date in turn one becomes a wrong date in every later turn**,
+because tier 1 forwards its own earlier answer as context.
+
+#### L1: tier 1 refuses to escalate the questions only tier 2 can answer
+
+Two phrasings, both failed, neither escalated:
+
+- *"anything fun happening around here this weekend?"* → answered from the
+  **Home calendar** ("Nothing on the calendar for this weekend").
+- *"are there any concerts or festivals happening near us this weekend?"* →
+  *"I don't have your location information. Which city should I check?"*
+
+The second is the diagnostic one. **Tier 1 is correct that it has no location —
+the coordinates live in tier 2's prompt.** Escalating is precisely what would
+have resolved the question, and tier 1's own prompt lists "local happenings"
+as an escalation trigger. It short-circuits on the missing location instead of
+forwarding.
+
+**Fix this at the routing rule, not by giving tier 1 coordinates.** Tier 1
+never needs to know where the house is; it needs to know that not knowing is
+not a reason to decline. Something like: *"Never answer a local question by
+asking which city — you are not the layer that knows, and the research tool
+is. Forward it."* Untried.
+
 ## How to audit this
 
 - **Which models both tiers use** — read the OpenRouter config entry's
