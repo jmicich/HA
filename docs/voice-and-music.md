@@ -675,6 +675,99 @@ reproducible only from this document, not from `ha_export/`. Re-deriving it
 after a restore means three registry edits: the WiiM in the Bedroom, named
 `WiiM` with no aliases, and `no_music` on the voice puck's MA player.
 
+### Defect 3b — FIXED 2026-08-25, on the ninth attempt, by changing what is measured
+
+Eight consecutive failures preceded this, across a prompt hint, a per-candidate
+tag, that tag re-ranked to position 1, an escalation tool, and a stronger
+model tier. **All eight measured how the words are *spelled*. The connection
+is how they *sound*.** "Roomers" and "Rumours" are three edits apart on a
+seven-letter word — orthographically distant, phonetically identical. That is
+why more signal, better ranking and a bigger model all changed nothing: the
+similarity being computed was the wrong quantity.
+
+**Two candidate metrics were measured and rejected before landing on the
+third. Both rejections are quantitative, so nobody needs to re-derive them.**
+
+**1. Character-multiset Dice (what the tag used until today) cannot support a
+deterministic decision at any threshold.** Measured against the live recall
+list:
+
+| Query → best recall match | Score |
+| --- | --- |
+| "Take 5" → **Take Five** (true) | 0.615 |
+| "Hamilton soundtrack" → **Fleetwood Mac Radio** (unrelated) | **0.629** |
+
+A false positive scoring above a true positive. No threshold separates them,
+because the metric is order-blind and length-biased — long strings share many
+letters. **This also means the tag as it stood could already mis-fire**; it
+was harmless only because the model ignored it. Making the tag authoritative
+without changing the metric would have shipped that bug.
+
+**2. Length-normalised Levenshtein is far better behaved but still fails at
+the list's real size.** With 9 recall entries the noise floor sat at ~0.25 and
+"Roomers"→"Rumours" scored 0.429 — a workable margin. At the **40 entries the
+list is actually capped at**, more entries mean more chances at a spurious
+high score, and the floor rose to meet it:
+
+| Query → best match | Score |
+| --- | --- |
+| "Roomers" → Rumours (true) | 0.429 |
+| "Zeppelin" → Purple Rain (noise) | **0.400** |
+
+A 0.029 margin is not a threshold, it is a coin toss. **Measure the noise
+floor at the list's maximum size, not its current size** — the two differed by
+0.15 here, and testing at 9 entries would have produced a fix that degraded
+silently as the list filled.
+
+**3. Soundex separates them exactly, with no threshold at all.**
+
+| Pair | Codes | |
+| --- | --- | --- |
+| Roomers / Rumours | R562 = R562 | match |
+| Flitwood Mack / Fleetwood Mac Radio | F433 = F433 | match |
+| Kind of Blew / Kind Of Blue | K531 = K531 | match |
+| Dreems / Dreams, Rok Mix / Rock Mix | | match |
+| Zeppelin, Hamilton soundtrack, Nirvana, Beethoven, Taylor Swift | all differ | no match |
+
+Binary rather than graded, which is exactly what a deterministic override
+needs. Soundex's leading-letter anchor is doing most of the noise rejection.
+
+**The override.** `recall_match` is now a Soundex equality against the recall
+list rather than a fuzzy score. When it matches, `search_music` returns **only**
+the candidates whose normalised name equals that recall entry — the literal
+text match is removed from the list entirely, so there is nothing else for the
+model to choose. The inner candidate check stays exact-match, unchanged and
+still correct: by that stage the true title is known verbatim.
+
+**Verified end to end:**
+
+| Case | Result |
+| --- | --- |
+| "play Roomers" ×3 | ✅ **3 of 3** — Rumours by Fleetwood Mac, track 1, state-verified |
+| `search_music("Roomers")` | ✅ returns exactly one candidate; the "Roomers" playlist is gone |
+| "Hamilton soundtrack" (novel, not in recall) | ✅ 11 candidates, every `note` empty — override did not fire |
+| Nonsense string | ✅ 12 candidates, every `note` empty |
+
+**The self-reinforcement trap now runs the right way.** Every failed rep used
+to log "Roomers" into the recall list, poisoning the fixture for the next one.
+Successful reps log **"Rumours"**, so the list gets more correct with use
+instead of less. That trap is not gone — a genuinely wrong resolution still
+feeds itself — but this case no longer drives it.
+
+**Two residuals, both accepted deliberately:**
+
+- **"Rumors" now resolves to "Rumours" too** (R562 either way). If someone
+  wants a different real track called "Rumors", they will get Fleetwood Mac.
+  That is the recall feature behaving exactly as designed — the list is a
+  prior about *this house* — and naming the artist still routes correctly,
+  because artist filtering runs before recall tagging. Accepted, not
+  overlooked.
+- **"Take 5" does not Soundex-match "Take Five"** (T200 vs T211; the digit is
+  stripped as non-alpha). No regression: that case already resolves through
+  the prompt's recall hint, and the override simply does not fire. Worth
+  knowing that digit-versus-word substitutions are outside what this fix
+  covers.
+
 ## Traps, with evidence
 
 **Artist-type playback triggers unbounded enumeration.** MA fans out API
@@ -1071,7 +1164,8 @@ model or prompt changes, separately from correctness.
 | DJ session, replace | "switch to [genre] instead" → must route to `start_dj_session`, NOT `steer` — see the open defect |
 | DJ session, stop | "stop the DJ" → playback paused, session flag off, timer idle |
 | DJ session, steer with none running | must refuse, not silently start one |
-| Mangled recall | garbled version of a previously played item → maps to it |
+| Mangled recall | garbled version of a previously played item → maps to it. Fixed 2026-08-25 by a Soundex override; **verify `search_music` returns only the recall candidate**, not merely that the right thing played |
+| Recall override does not over-fire | a request with no recall connection ("Hamilton soundtrack") → every candidate's `note` must be empty; this is the case the old similarity metric would have hijacked |
 | Novel request | absent from the recall list → treated as new, **must not** bend |
 
 The last two exist because of the recall list; see `music-recall-memory.md`.
@@ -1295,8 +1389,13 @@ and single-run tests cannot distinguish "broken" from "unlucky".
    → the Beatles, not the same-titled Lil Peep track, Daniel Leggs album,
    or Toosii album).
 
-   **3b. Phonetic or garbled-transcription mismatches — still open, now
-   backed by six consecutive negative reps, not just three.** The
+   **3b. Phonetic or garbled-transcription mismatches — FIXED 2026-08-25
+   after eight consecutive negative reps.** See "Defect 3b — FIXED
+   2026-08-25" above for the fix and, more usefully, for the two metrics
+   that were measured and rejected first. The history below is kept because
+   it records what does *not* work, which is most of the value.
+
+   **Historical, pre-fix:** The
    mangled-recall case ("Roomers" → should resolve to "Rumours") has never
    once resolved correctly across every mechanism tried: recall-list
    prompt hint alone, a per-candidate structural tag, that tag moved to the
