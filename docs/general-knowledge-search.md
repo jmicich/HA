@@ -403,6 +403,30 @@ no side-effect state to read — the answer *is* the artifact. So:
   re-deriving the expected answer on every run. Cases anchored to a stable
   post-cutoff fact do not — prefer those for routine regression.
 
+**Relay-fidelity check, added 2026-08-24 — every escalated case carries it.**
+Capture both `script.ask_general_knowledge`'s returned `answer` (from its
+trace) and the spoken `response.speech.plain.speech`, and compare them for
+**added or dropped specifics**: a name, number, date, qualifier or hedge
+present in one and not the other.
+
+**Deliberately NOT a byte-equality check, unlike the music suite's `say`
+rule — and the difference matters.** Tier 2's raw answer sometimes carries a
+narration preamble ("I'll search for concerts near…"), observed live on
+2026-08-24. Verbatim relay would put that leak straight into the spoken
+reply. **Tier 1's paraphrasing is load-bearing here**, which is exactly why
+the music path can demand word-for-word repetition and this one cannot.
+
+So the standard is: wording may differ, **facts may not**. Specifically a
+failure if the reply
+- states a name, number, date or result the returned answer did not contain,
+- drops a date, year or qualifying phrase the answer did contain (the D-class
+  failure this document calls the most common one), or
+- converts a hedge into a certainty ("no clear answer" relayed as a fact).
+
+Record both strings verbatim when they disagree. The direction of the drift
+— added versus dropped — is what separates a fabrication from a truncation,
+and they have different fixes.
+
 **Any prompt change on either tier invalidates the whole suite**, the same
 rule the music suite carries.
 
@@ -425,6 +449,7 @@ rule the music suite carries.
 | L2 | Explicit elsewhere | "Sunset in Tokyo today" | Uses the named place, not home |
 | V1 | List invitation | "List every …" | Count plus a few examples; within the word cap |
 | V2 | Narration | Any escalated question | No "let me search…" preamble in the spoken text |
+| V3 | Relay fidelity | Any escalated question | Spoken reply adds no name/number/date the returned answer lacked, and drops no date or qualifier it carried |
 | C1 | Multi-turn follow-up | A pronoun/elliptical follow-up on the previous answer | Resolved correctly, not answered blind |
 
 C1 is the case most likely to regress: the escalation script sends a single

@@ -1022,6 +1022,29 @@ is a new failure class the old single-script design couldn't have, so keep
 checking it rather than assuming it stays clean), and read the final player
 state.
 
+**Every case that fires a music script also carries a say-equality check,
+added 2026-08-24.** This is a *method* rule, not a single case — it applies
+to every row below that succeeds, because the failure it catches (the spoken
+reply disagreeing with the action) can appear on any of them.
+
+For each successful case, capture both:
+
+- the script's `result.say` from its execution trace, and
+- `response.speech.plain.speech` from the `conversation.process` result.
+
+**They must be equal after trimming — byte for byte, not merely consistent
+or "close enough".** A reply that says the same thing in different words has
+already failed, because the whole mechanism is the model repeating a
+sentence rather than composing one; a paraphrase means it composed, and the
+next one may compose something untrue. Record any inequality verbatim, both
+strings, rather than summarising it — the shape of the drift is the finding.
+
+**The error path is the other half and inverts the check.** A response with
+no `say` (or an empty one) must NOT be spoken: the guard's error is an
+instruction to retry. Passing means the model retried, or said plainly that
+it did not work — never that it read the error text aloud as though it were
+a confirmation.
+
 **New failure mode from the split, distinct from the old design's:** the
 old script had a hardcoded `default: no music found` branch. That branch no
 longer exists — `search_music` can return an empty or useless candidate
@@ -1060,7 +1083,7 @@ model or prompt changes, separately from correctness.
 | Repeat, new content | "play [song] on repeat" — must both play the right song AND set `repeat: "one"` in the same request |
 | Repeat, current, no target | "put this song on repeat" / "repeat this" — no room named; this is the exact phrasing that triggered defect #4 during this feature's own verification, see "Repeat" above |
 | Repeat, remove | "stop repeating" / "turn off repeat" |
-| Spoken reply matches the action | any successful music command — the spoken text must equal the script's `say` field **byte for byte**, checked against the trace, not merely be consistent with it |
+| Spoken reply on an error path | force the unknown-speaker guard (name a speaker that does not exist) — the model must retry or admit failure, and must **never** speak the error text as a confirmation |
 | Open-ended, from idle | "play some music" / "put something on" — must play something and set `radio_mode`, never ask what they want |
 | Open-ended, while playing | same phrasing, but with music already playing — **known to fail**, routes to resume instead; see "Open-ended playback" |
 | Open-ended, vibe | "play something like [artist]" — `radio_mode` true |
