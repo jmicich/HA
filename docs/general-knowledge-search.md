@@ -484,10 +484,15 @@ from the tester's own knowledge.
 | V2 | Narration | ✅ | no "let me search" preamble in any reply |
 | C1 | Multi-turn follow-up | ✅ | "who was **their** manager?" resolved to the Dodgers correctly, despite tier 2 being stateless |
 | L1 | Implicit local | ❌ **Fail** at run time, **fixed same day** | see below |
-| V1 | List invitation | ❌ **Wrong** at run time, **fixed same day** | see below; took two attempts |
+| V1 | List invitation | ❌ **Wrong**, improved but still intermittent | ~3 in 4 correct on 2026-08-25; see below |
 | F2/F3/D1/D2 | Officeholder, volatile, dates | — | not run as separate cases; date discipline was exercised incidentally and produced one Wrong, below |
 
-#### V1 — FIXED 2026-08-24, and the first fix was aimed at the wrong thing
+#### V1 — much improved 2026-08-24, **not fixed**; see the 2026-08-25 revisit below
+
+*(This section was originally headed "FIXED". It was not: three consecutive
+passes were mistaken for a fix, and the next run produced a Wrong. The
+account of what was tried and what changed is accurate and is kept; only
+the conclusion was wrong.)*
 
 **Attempt 1 (failed): tighten the output shape.** The existing rule was the
 last clause of the word-cap bullet and was purely prohibitive — "never recite
@@ -543,6 +548,51 @@ it up at all before rewriting the rules about how to phrase the answer.**
   structural route is to have tier 1 rewrite "list every X" into "how many X
   are there?" before forwarding, which removes the enumeration opportunity
   instead of forbidding it.
+
+#### V1 revisited, 2026-08-25 — improved and intermittent, not fixed
+
+
+**V1 is not fixed. It is improved and intermittent, and the 3-of-3 recorded
+on 2026-08-24 was a lucky streak.** Four reps this run:
+
+| Utterance | Result |
+| --- | --- |
+| "list every team that has won a Super Bowl" | ❌ **Wrong** — "Seventeen teams", then seventeen names recited |
+| "how many different teams have won a Super Bowl?" | ✅ Twenty, five examples |
+| "name all the teams that have ever won a Super Bowl" | ✅ Twenty, three examples |
+| "list every team that has won a Super Bowl" (again) | ✅ Twenty, five examples |
+
+**3 correct, 1 Wrong.** The failing phrasing is literally *"list every X"* —
+the exact string the tier-2 rule quotes — and it is intermittent rather than
+reliably broken, since the identical phrasing passed on the retry. Ground
+truth (20) came from a dated search at test time.
+
+Two things worth carrying:
+
+- **Three consecutive passes on a probabilistic case is not a fix**, and
+  this document already says so about the music suite. The general-knowledge
+  suite's own repetition guidance calls out exactly this for the
+  fabrication-prone cases. It was written down and still not heeded — the
+  claim "Wrong → Correct, 3 of 3" should have been "3 of 3 observed, rate
+  unknown".
+- The search-mandatory rule did move the needle a long way (the pre-fix
+  failure was wrong *and* self-contradictory, 23 names under a count of
+  seventeen). What survives is a smaller, self-consistent wrong answer that
+  appears when the model does not search. Any further attempt should target
+  *whether the search happened*, not the wording of the answer.
+
+**The wrong-year defect holds.** "Who won the most recent World Series?"
+answered "the 2025 World Series", correct against a dated search.
+
+**V3 relay fidelity passed, byte-identical in the case checked.** Tier 2
+returned *"The Seattle Seahawks won the most recent Super Bowl, defeating
+the New England Patriots 29-13 on February 8, 2026."* and the spoken reply
+was the same string — no added fact, no dropped date, and no narration
+preamble.
+
+**Not run:** playlist-by-name, song-with-no-artist, STT variant, mangled
+recall, DJ steer, pause/resume, and the remaining A/F/D/L general-knowledge
+cases. Second and third reps of every one-rep case above.
 
 #### Trap: an omitted key in a subentry reconfigure is not a preserved key
 

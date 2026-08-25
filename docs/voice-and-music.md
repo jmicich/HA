@@ -1160,6 +1160,41 @@ Two things worth carrying forward:
   closer to what "repeat *this*" means and removes this tool's exposure to
   defect #4 — but it was not what fixed the bug.
 
+### Run of 2026-08-25 — first run with the say-equality check enforced
+
+Occasioned by the `say` field and the tier-1 prompt rule that goes with it.
+Speaker inventory re-audited first: one music player per room after the
+`no_music` label, Kitchen and Attic speakerless, Bedroom now holds the WiiM.
+
+**Say-equality: every case that produced a `say` relayed it exactly.** Two
+were compared byte-for-byte against the execution trace; the rest were
+checked against the exact `say` template with the resolved player confirmed
+from player state. Recording which is which because they are not the same
+strength of evidence.
+
+| Case | Spoken reply | Check |
+| --- | --- | --- |
+| "play Yesterday on the Bedroom Speaker" | `Now playing Yesterday on WiiM.` | ✅ trace byte-match |
+| "play the album Rumours in the dining room" | `Now playing Rumours on Sonos 2.` | ✅ trace byte-match |
+| "play Fleetwood Mac in the living room" ×3 | `Now playing Fleetwood Mac Radio on Living Room Speaker.` (rep 2 with the radio suffix) | ✅ template + state |
+| "put this on repeat" / "turn off repeat" | `Repeat is on/off for WiiM.` | ✅ template + state |
+| "be my DJ … for the next 30 minutes" | `Starting a DJ set on Living Room Speaker. It will run for 30 minutes.` | ✅ template, duration branch |
+| "stop the DJ" | `DJ stopped.` | ✅ template |
+
+**The error path passed, and passed by composing rather than repeating**,
+which is the intended split. "Play Yesterday on the Bose" fired
+`play_music`, hit the guard, touched no player, and the model replied *"I
+don't have a speaker named Bose. The available speakers are … Sonos 2 in the
+Dining Room, and WiiM in the Bedroom."* It did not read the guard's error
+text aloud, and it used the paired room data correctly.
+
+**Room targeting: 3 of 3** on the case that was 1 of 3 before the
+`no_music` / one-speaker-per-room work — and this time it is not luck,
+because the precondition is enforced rather than assumed.
+
+Also passing: kitchen refusal, nonsense abstention, repeat both directions,
+DJ start/stop.
+
 ### Run of 2026-08-24 — after the DJ-session work (stage 1 + stage 2)
 
 Full re-run of both suites, occasioned by the tier-1 prompt changes for radio
