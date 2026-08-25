@@ -1195,6 +1195,31 @@ because the precondition is enforced rather than assumed.
 Also passing: kitchen refusal, nonsense abstention, repeat both directions,
 DJ start/stop.
 
+**Completed 2026-08-25 — the cases the first pass left out.** Same method:
+say-equality on every success, state or trace for the action.
+
+| Case | Result |
+| --- | --- |
+| Playlist by name | ✅ "Rock Mix", correct player |
+| Song, no artist | ✅ Take Five — the Brubeck original, not a cover |
+| Album + room | ✅ Kind Of Blue, started at track 1, Dining Room |
+| STT variant | ✅ "flitwood mack" → Fleetwood Mac Radio, self-corrected on a second search |
+| Pause, no target | ✅ actually paused, position held at 15 |
+| Resume, with target | ✅ resumed from 15 |
+| DJ start, no duration | ✅ timer correctly left idle, `say` had no duration clause |
+| DJ steer | ✅ queue truncated to 12, current track preserved at 81s, new batch behind it |
+| DJ stop | ✅ |
+| Mangled recall | ❌ "Roomers" played literally — **eighth consecutive negative** |
+
+**Defect 3b is unchanged, and the `say` field changed how it fails rather
+than whether.** The reply was *"Now playing Roomers on Living Room
+Speaker."* — the wrong pick, stated plainly enough to notice. Previously the
+reply could have been vaguer. That is the alignment work doing its job on a
+case the resolution work still cannot fix.
+
+Recall-list hygiene performed: the rep logged "Roomers" as it always does,
+and it was removed afterwards with "Rumours" left intact.
+
 ### Run of 2026-08-24 — after the DJ-session work (stage 1 + stage 2)
 
 Full re-run of both suites, occasioned by the tier-1 prompt changes for radio

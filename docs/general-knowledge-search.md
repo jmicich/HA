@@ -549,6 +549,25 @@ it up at all before rewriting the rules about how to phrase the answer.**
   are there?" before forwarding, which removes the enumeration opportunity
   instead of forbidding it.
 
+**Completed 2026-08-25 — the remaining cases.** Ground truth for every
+factual case from a dated search run at test time.
+
+| # | Case | Score | Note |
+| --- | --- | --- | --- |
+| F2 | Current officeholder | ✅ Correct | "our mayor" → derived the home city, named the current holder with the swearing-in date and ordinal; matched the search exactly |
+| F3/D2 | Volatile fact, relative date | ✅ Correct | "did the Pirates win yesterday?" → correct score, innings and the winning player, and it said "Monday, August 24" rather than "yesterday" |
+| D1 | Bare date, no year | ✅ Correct | volunteered the year unprompted |
+| F4 | Static knowledge | ✅ Correct | |
+| A1 | Fictional entities ×3 | ✅ 3/3 | no invented score in any rep |
+| A2 | Future event ×3 | ✅ 3/3 | one rep answered at tier 1 without escalating — correct and safe, but the prompt says to forward; noted, not chased |
+| C1 | Multi-turn follow-up | ✅ Correct | "who was **their** head coach?" resolved to the right team, and the name checked out against a search |
+
+**The date discipline is the strongest part of this stack.** F2, F3/D2 and
+D1 all named an explicit date without being asked, and D2 specifically
+refused the word "yesterday" that the question used. That is the rule this
+document calls the most common failure mode, holding across every case that
+touched it.
+
 #### V1 revisited, 2026-08-25 — improved and intermittent, not fixed
 
 
