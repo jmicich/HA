@@ -92,6 +92,8 @@ play_music:
         radio: '{{ radio }}'
         player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
           true) }}'
+        say: >-
+          Now playing {{ name }} on {{ state_attr(target_player, 'friendly_name') | default(target_player, true) }}.{{ ' It will keep playing similar music.' if radio else '' }}{{ ' It will repeat.' if (repeat | default(false, true)) else '' }}
   - event: music_played
     event_data:
       played: '{{ result.played }}'
@@ -670,6 +672,8 @@ set_music_repeat:
         repeat: '{{ mode }}'
         player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
           true) }}'
+        say: >-
+          Repeat is {{ 'on' if mode == 'one' else 'off' }} for {{ state_attr(target_player, 'friendly_name') | default(target_player, true) }}.
         chosen_because: '{{ ''it is the speaker currently playing'' if (playing |
           length) == 1 else ''nothing was playing, so the default speaker was used''
           }}'
@@ -1066,6 +1070,8 @@ start_dj_session:
         player: '{{ state_attr(target_player, ''friendly_name'') | default(target_player,
           true) }}'
         error: '{{ q.error | default('''', true) }}'
+        say: >-
+          {% if q.queued | default(0, true) > 0 %}Starting a DJ set on {{ state_attr(target_player, 'friendly_name') | default(target_player, true) }}.{{ ' It will run for ' ~ (duration_minutes | int) ~ ' minutes.' if (duration_minutes | default(0, true) | int) > 0 else '' }}{% endif %}
   - stop: Session started
     response_variable: result
 steer_dj_session:
@@ -1125,6 +1131,8 @@ steer_dj_session:
         player: '{{ state_attr(session_player, ''friendly_name'') | default(session_player,
           true) }}'
         error: '{{ q.error | default('''', true) }}'
+        say: >-
+          {% if q.queued | default(0, true) > 0 %}OK, changing direction on {{ state_attr(session_player, 'friendly_name') | default(session_player, true) }}.{% endif %}
   - stop: Session steered
     response_variable: result
 stop_dj_session:
@@ -1164,5 +1172,7 @@ stop_dj_session:
         player: '{{ state_attr(session_player, ''friendly_name'') | default('''', true)
           if was_active else '''' }}'
         note: '{{ ''No DJ session was running.'' if not was_active else '''' }}'
+        say: >-
+          {{ 'DJ stopped.' if was_active else 'No DJ session was running.' }}
   - stop: Session stopped
     response_variable: result
