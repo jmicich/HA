@@ -243,62 +243,43 @@ search_music:
 
         {%- endif -%}'
       artist_l: '{{ artist | default('''', true) | lower }}'
-      recall_match: '{%- macro cdice(a, b) -%}
+      recall_match: '{%- macro sdx(w) -%}
 
-        {%- set al = a | lower | replace('' '', '''') -%}
+        {%- set s = w | lower | regex_replace(''[^a-z]'', '''') -%}
 
-        {%- set bl = b | lower | replace('' '', '''') -%}
-
-        {%- set nsb = namespace(remaining=(bl | list)) -%}
-
-        {%- set nsc = namespace(n=0) -%}
-
-        {%- for ch in (al | list) -%}
-
-        {%- if ch in nsb.remaining -%}
-
-        {%- set nsc.n = nsc.n + 1 -%}
-
-        {%- set rem = namespace(new=[], done=false) -%}
-
-        {%- for x in nsb.remaining -%}
-
-        {%- if x == ch and not rem.done -%}
-
-        {%- set rem.done = true -%}
+        {%- if (s | length) == 0 -%}{{- '''' -}}
 
         {%- else -%}
 
-        {%- set rem.new = rem.new + [x] -%}
+        {%- set codes = {''b'':''1'',''f'':''1'',''p'':''1'',''v'':''1'',''c'':''2'',''g'':''2'',''j'':''2'',''k'':''2'',''q'':''2'',''s'':''2'',''x'':''2'',''z'':''2'',''d'':''3'',''t'':''3'',''l'':''4'',''m'':''5'',''n'':''5'',''r'':''6''} -%}
 
-        {%- endif -%}
+        {%- set ns = namespace(out=(s[0] | upper), prev=codes.get(s[0], ''0'')) -%}
+
+        {%- for ch in s[1:] -%}
+
+        {%- set c = codes.get(ch, ''0'') -%}
+
+        {%- if c != ''0'' and c != ns.prev -%}{%- set ns.out = ns.out ~ c -%}{%- endif -%}
+
+        {%- if ch != ''h'' and ch != ''w'' -%}{%- set ns.prev = c -%}{%- endif -%}
 
         {%- endfor -%}
 
-        {%- set nsb.remaining = rem.new -%}
+        {{- (ns.out ~ ''000'')[:4] -}}
 
         {%- endif -%}
-
-        {%- endfor -%}
-
-        {%- set denom = (al|length)+(bl|length) -%}
-
-        {{- ((2*nsc.n)/denom) if denom > 0 else 0 -}}
 
         {%- endmacro -%}
 
-        {%- set recall_options = state_attr(''input_select.music_recall'', ''options'')
-        | default([], true) -%}
+        {%- set recall_options = state_attr(''input_select.music_recall'', ''options'') | default([], true) -%}
 
-        {%- set nsm = namespace(best='''', score=0) -%}
+        {%- set qcode = sdx(query) -%}
+
+        {%- set nsm = namespace(best='''') -%}
 
         {%- for r in recall_options -%}
 
-        {%- set s = cdice(query, r) | float -%}
-
-        {%- if s > nsm.score -%}
-
-        {%- set nsm.score = s -%}
+        {%- if nsm.best == '''' and r != ''(none)'' and qcode != '''' and sdx(r) == qcode -%}
 
         {%- set nsm.best = r -%}
 
@@ -306,7 +287,7 @@ search_music:
 
         {%- endfor -%}
 
-        {{ nsm.best if nsm.score >= 0.5 else '''' }}'
+        {{ nsm.best }}'
       candidates: '{%- set ns = namespace(items=[]) -%}
 
         {%- for kind, bucket in [(''track'', found.tracks), (''album'', found.albums),
@@ -402,8 +383,9 @@ search_music:
 
         {%- set ns.items = ns.items + [{''uri'': it.uri, ''kind'': kind, ''name'':
         it.name, ''artist'': ((it.artists | default([], true) | map(attribute=''name'')
-        | join('', '')) if it.artists is defined else ''''), ''note'': (''matches
-        something recently played'' if it in rc.recall else '''')}] -%}
+        | join('', '')) if it.artists is defined else ''''), ''note'': (''This
+        house has played this exact title before and the words spoken sound the same.
+        This is the intended match.'' if it in rc.recall else '''')}] -%}
 
         {%- endif -%}
 
@@ -415,8 +397,9 @@ search_music:
 
         {%- endfor -%}
 
-        {%- set final = (ns.items | selectattr(''note'', ''ne'', '''') | list) + (ns.items
-        | selectattr(''note'', ''eq'', '''') | list) -%}
+        {%- set noted = ns.items | selectattr(''note'', ''ne'', '''') | list -%}
+
+        {%- set final = noted if (noted | length) > 0 else ns.items -%}
 
         {{ final }}'
   - variables:
