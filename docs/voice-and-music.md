@@ -1022,6 +1022,29 @@ is a new failure class the old single-script design couldn't have, so keep
 checking it rather than assuming it stays clean), and read the final player
 state.
 
+**Every case that fires a music script also carries a say-equality check,
+added 2026-08-24.** This is a *method* rule, not a single case — it applies
+to every row below that succeeds, because the failure it catches (the spoken
+reply disagreeing with the action) can appear on any of them.
+
+For each successful case, capture both:
+
+- the script's `result.say` from its execution trace, and
+- `response.speech.plain.speech` from the `conversation.process` result.
+
+**They must be equal after trimming — byte for byte, not merely consistent
+or "close enough".** A reply that says the same thing in different words has
+already failed, because the whole mechanism is the model repeating a
+sentence rather than composing one; a paraphrase means it composed, and the
+next one may compose something untrue. Record any inequality verbatim, both
+strings, rather than summarising it — the shape of the drift is the finding.
+
+**The error path is the other half and inverts the check.** A response with
+no `say` (or an empty one) must NOT be spoken: the guard's error is an
+instruction to retry. Passing means the model retried, or said plainly that
+it did not work — never that it read the error text aloud as though it were
+a confirmation.
+
 **New failure mode from the split, distinct from the old design's:** the
 old script had a hardcoded `default: no music found` branch. That branch no
 longer exists — `search_music` can return an empty or useless candidate
@@ -1060,7 +1083,7 @@ model or prompt changes, separately from correctness.
 | Repeat, new content | "play [song] on repeat" — must both play the right song AND set `repeat: "one"` in the same request |
 | Repeat, current, no target | "put this song on repeat" / "repeat this" — no room named; this is the exact phrasing that triggered defect #4 during this feature's own verification, see "Repeat" above |
 | Repeat, remove | "stop repeating" / "turn off repeat" |
-| Spoken reply matches the action | any successful music command — the spoken text must equal the script's `say` field **byte for byte**, checked against the trace, not merely be consistent with it |
+| Spoken reply on an error path | force the unknown-speaker guard (name a speaker that does not exist) — the model must retry or admit failure, and must **never** speak the error text as a confirmation |
 | Open-ended, from idle | "play some music" / "put something on" — must play something and set `radio_mode`, never ask what they want |
 | Open-ended, while playing | same phrasing, but with music already playing — **known to fail**, routes to resume instead; see "Open-ended playback" |
 | Open-ended, vibe | "play something like [artist]" — `radio_mode` true |
@@ -1136,6 +1159,66 @@ Two things worth carrying forward:
   and resolves the speaker from whatever is currently playing, which is both
   closer to what "repeat *this*" means and removes this tool's exposure to
   defect #4 — but it was not what fixed the bug.
+
+### Run of 2026-08-25 — first run with the say-equality check enforced
+
+Occasioned by the `say` field and the tier-1 prompt rule that goes with it.
+Speaker inventory re-audited first: one music player per room after the
+`no_music` label, Kitchen and Attic speakerless, Bedroom now holds the WiiM.
+
+**Say-equality: every case that produced a `say` relayed it exactly.** Two
+were compared byte-for-byte against the execution trace; the rest were
+checked against the exact `say` template with the resolved player confirmed
+from player state. Recording which is which because they are not the same
+strength of evidence.
+
+| Case | Spoken reply | Check |
+| --- | --- | --- |
+| "play Yesterday on the Bedroom Speaker" | `Now playing Yesterday on WiiM.` | ✅ trace byte-match |
+| "play the album Rumours in the dining room" | `Now playing Rumours on Sonos 2.` | ✅ trace byte-match |
+| "play Fleetwood Mac in the living room" ×3 | `Now playing Fleetwood Mac Radio on Living Room Speaker.` (rep 2 with the radio suffix) | ✅ template + state |
+| "put this on repeat" / "turn off repeat" | `Repeat is on/off for WiiM.` | ✅ template + state |
+| "be my DJ … for the next 30 minutes" | `Starting a DJ set on Living Room Speaker. It will run for 30 minutes.` | ✅ template, duration branch |
+| "stop the DJ" | `DJ stopped.` | ✅ template |
+
+**The error path passed, and passed by composing rather than repeating**,
+which is the intended split. "Play Yesterday on the Bose" fired
+`play_music`, hit the guard, touched no player, and the model replied *"I
+don't have a speaker named Bose. The available speakers are … Sonos 2 in the
+Dining Room, and WiiM in the Bedroom."* It did not read the guard's error
+text aloud, and it used the paired room data correctly.
+
+**Room targeting: 3 of 3** on the case that was 1 of 3 before the
+`no_music` / one-speaker-per-room work — and this time it is not luck,
+because the precondition is enforced rather than assumed.
+
+Also passing: kitchen refusal, nonsense abstention, repeat both directions,
+DJ start/stop.
+
+**Completed 2026-08-25 — the cases the first pass left out.** Same method:
+say-equality on every success, state or trace for the action.
+
+| Case | Result |
+| --- | --- |
+| Playlist by name | ✅ "Rock Mix", correct player |
+| Song, no artist | ✅ Take Five — the Brubeck original, not a cover |
+| Album + room | ✅ Kind Of Blue, started at track 1, Dining Room |
+| STT variant | ✅ "flitwood mack" → Fleetwood Mac Radio, self-corrected on a second search |
+| Pause, no target | ✅ actually paused, position held at 15 |
+| Resume, with target | ✅ resumed from 15 |
+| DJ start, no duration | ✅ timer correctly left idle, `say` had no duration clause |
+| DJ steer | ✅ queue truncated to 12, current track preserved at 81s, new batch behind it |
+| DJ stop | ✅ |
+| Mangled recall | ❌ "Roomers" played literally — **eighth consecutive negative** |
+
+**Defect 3b is unchanged, and the `say` field changed how it fails rather
+than whether.** The reply was *"Now playing Roomers on Living Room
+Speaker."* — the wrong pick, stated plainly enough to notice. Previously the
+reply could have been vaguer. That is the alignment work doing its job on a
+case the resolution work still cannot fix.
+
+Recall-list hygiene performed: the rep logged "Roomers" as it always does,
+and it was removed afterwards with "Rumours" left intact.
 
 ### Run of 2026-08-24 — after the DJ-session work (stage 1 + stage 2)
 

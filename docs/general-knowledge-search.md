@@ -403,6 +403,30 @@ no side-effect state to read — the answer *is* the artifact. So:
   re-deriving the expected answer on every run. Cases anchored to a stable
   post-cutoff fact do not — prefer those for routine regression.
 
+**Relay-fidelity check, added 2026-08-24 — every escalated case carries it.**
+Capture both `script.ask_general_knowledge`'s returned `answer` (from its
+trace) and the spoken `response.speech.plain.speech`, and compare them for
+**added or dropped specifics**: a name, number, date, qualifier or hedge
+present in one and not the other.
+
+**Deliberately NOT a byte-equality check, unlike the music suite's `say`
+rule — and the difference matters.** Tier 2's raw answer sometimes carries a
+narration preamble ("I'll search for concerts near…"), observed live on
+2026-08-24. Verbatim relay would put that leak straight into the spoken
+reply. **Tier 1's paraphrasing is load-bearing here**, which is exactly why
+the music path can demand word-for-word repetition and this one cannot.
+
+So the standard is: wording may differ, **facts may not**. Specifically a
+failure if the reply
+- states a name, number, date or result the returned answer did not contain,
+- drops a date, year or qualifying phrase the answer did contain (the D-class
+  failure this document calls the most common one), or
+- converts a hedge into a certainty ("no clear answer" relayed as a fact).
+
+Record both strings verbatim when they disagree. The direction of the drift
+— added versus dropped — is what separates a fabrication from a truncation,
+and they have different fixes.
+
 **Any prompt change on either tier invalidates the whole suite**, the same
 rule the music suite carries.
 
@@ -425,6 +449,7 @@ rule the music suite carries.
 | L2 | Explicit elsewhere | "Sunset in Tokyo today" | Uses the named place, not home |
 | V1 | List invitation | "List every …" | Count plus a few examples; within the word cap |
 | V2 | Narration | Any escalated question | No "let me search…" preamble in the spoken text |
+| V3 | Relay fidelity | Any escalated question | Spoken reply adds no name/number/date the returned answer lacked, and drops no date or qualifier it carried |
 | C1 | Multi-turn follow-up | A pronoun/elliptical follow-up on the previous answer | Resolved correctly, not answered blind |
 
 C1 is the case most likely to regress: the escalation script sends a single
@@ -459,10 +484,15 @@ from the tester's own knowledge.
 | V2 | Narration | ✅ | no "let me search" preamble in any reply |
 | C1 | Multi-turn follow-up | ✅ | "who was **their** manager?" resolved to the Dodgers correctly, despite tier 2 being stateless |
 | L1 | Implicit local | ❌ **Fail** at run time, **fixed same day** | see below |
-| V1 | List invitation | ❌ **Wrong** at run time, **fixed same day** | see below; took two attempts |
+| V1 | List invitation | ❌ **Wrong**, improved but still intermittent | ~3 in 4 correct on 2026-08-25; see below |
 | F2/F3/D1/D2 | Officeholder, volatile, dates | — | not run as separate cases; date discipline was exercised incidentally and produced one Wrong, below |
 
-#### V1 — FIXED 2026-08-24, and the first fix was aimed at the wrong thing
+#### V1 — much improved 2026-08-24, **not fixed**; see the 2026-08-25 revisit below
+
+*(This section was originally headed "FIXED". It was not: three consecutive
+passes were mistaken for a fix, and the next run produced a Wrong. The
+account of what was tried and what changed is accurate and is kept; only
+the conclusion was wrong.)*
 
 **Attempt 1 (failed): tighten the output shape.** The existing rule was the
 last clause of the word-cap bullet and was purely prohibitive — "never recite
@@ -518,6 +548,70 @@ it up at all before rewriting the rules about how to phrase the answer.**
   structural route is to have tier 1 rewrite "list every X" into "how many X
   are there?" before forwarding, which removes the enumeration opportunity
   instead of forbidding it.
+
+**Completed 2026-08-25 — the remaining cases.** Ground truth for every
+factual case from a dated search run at test time.
+
+| # | Case | Score | Note |
+| --- | --- | --- | --- |
+| F2 | Current officeholder | ✅ Correct | "our mayor" → derived the home city, named the current holder with the swearing-in date and ordinal; matched the search exactly |
+| F3/D2 | Volatile fact, relative date | ✅ Correct | "did the Pirates win yesterday?" → correct score, innings and the winning player, and it said "Monday, August 24" rather than "yesterday" |
+| D1 | Bare date, no year | ✅ Correct | volunteered the year unprompted |
+| F4 | Static knowledge | ✅ Correct | |
+| A1 | Fictional entities ×3 | ✅ 3/3 | no invented score in any rep |
+| A2 | Future event ×3 | ✅ 3/3 | one rep answered at tier 1 without escalating — correct and safe, but the prompt says to forward; noted, not chased |
+| C1 | Multi-turn follow-up | ✅ Correct | "who was **their** head coach?" resolved to the right team, and the name checked out against a search |
+
+**The date discipline is the strongest part of this stack.** F2, F3/D2 and
+D1 all named an explicit date without being asked, and D2 specifically
+refused the word "yesterday" that the question used. That is the rule this
+document calls the most common failure mode, holding across every case that
+touched it.
+
+#### V1 revisited, 2026-08-25 — improved and intermittent, not fixed
+
+
+**V1 is not fixed. It is improved and intermittent, and the 3-of-3 recorded
+on 2026-08-24 was a lucky streak.** Four reps this run:
+
+| Utterance | Result |
+| --- | --- |
+| "list every team that has won a Super Bowl" | ❌ **Wrong** — "Seventeen teams", then seventeen names recited |
+| "how many different teams have won a Super Bowl?" | ✅ Twenty, five examples |
+| "name all the teams that have ever won a Super Bowl" | ✅ Twenty, three examples |
+| "list every team that has won a Super Bowl" (again) | ✅ Twenty, five examples |
+
+**3 correct, 1 Wrong.** The failing phrasing is literally *"list every X"* —
+the exact string the tier-2 rule quotes — and it is intermittent rather than
+reliably broken, since the identical phrasing passed on the retry. Ground
+truth (20) came from a dated search at test time.
+
+Two things worth carrying:
+
+- **Three consecutive passes on a probabilistic case is not a fix**, and
+  this document already says so about the music suite. The general-knowledge
+  suite's own repetition guidance calls out exactly this for the
+  fabrication-prone cases. It was written down and still not heeded — the
+  claim "Wrong → Correct, 3 of 3" should have been "3 of 3 observed, rate
+  unknown".
+- The search-mandatory rule did move the needle a long way (the pre-fix
+  failure was wrong *and* self-contradictory, 23 names under a count of
+  seventeen). What survives is a smaller, self-consistent wrong answer that
+  appears when the model does not search. Any further attempt should target
+  *whether the search happened*, not the wording of the answer.
+
+**The wrong-year defect holds.** "Who won the most recent World Series?"
+answered "the 2025 World Series", correct against a dated search.
+
+**V3 relay fidelity passed, byte-identical in the case checked.** Tier 2
+returned *"The Seattle Seahawks won the most recent Super Bowl, defeating
+the New England Patriots 29-13 on February 8, 2026."* and the spoken reply
+was the same string — no added fact, no dropped date, and no narration
+preamble.
+
+**Not run:** playlist-by-name, song-with-no-artist, STT variant, mangled
+recall, DJ steer, pause/resume, and the remaining A/F/D/L general-knowledge
+cases. Second and third reps of every one-rep case above.
 
 #### Trap: an omitted key in a subentry reconfigure is not a preserved key
 
