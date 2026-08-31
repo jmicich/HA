@@ -1159,3 +1159,80 @@ stop_dj_session:
           {{ 'DJ stopped.' if was_active else 'No DJ session was running.' }}
   - stop: Session stopped
     response_variable: result
+remember_this:
+  alias: Remember This
+  description: Store a lasting fact or preference about this household so it is available
+    in every future conversation - "remember that I like the living room for dinner
+    music", "remember the dog is called Biscuit", "remember we call the big speaker
+    the Sonos". Also used to forget - set forget to true to remove something previously
+    remembered. ONLY for durable facts about the house and the people in it. Never
+    use it for something to do now, a one-off request, or anything that will be untrue
+    tomorrow; those are not memories and they would crowd out the ones that matter.
+  icon: mdi:brain
+  mode: queued
+  max: 5
+  fields:
+    fact:
+      name: Fact
+      description: The thing to remember, as a short complete sentence in the third
+        person that will still make sense months from now - "Justin prefers the Living
+        Room Speaker for dinner music". Do not include today's date; it is added for
+        you. When forgetting, pass enough of the original wording to identify which
+        one to drop.
+      required: true
+      selector:
+        text: null
+    forget:
+      name: Forget
+      description: True to REMOVE a previously remembered fact matching this text,
+        rather than adding one. Omit or leave false to remember something new.
+      required: false
+      selector:
+        boolean: {}
+  sequence:
+  - alias: Read current memory, dropping the placeholder and any near-duplicate
+    variables:
+      current: '{{ state_attr(''input_select.assistant_memory'', ''options'') | default([],
+        true) | reject(''eq'', ''(none)'') | list }}'
+      entry: '{{ now().strftime(''%Y-%m-%d'') ~ '' | '' ~ (fact | trim) }}'
+      needle: '{{ fact | trim | lower }}'
+  - alias: Remembering replaces a matching entry; forgetting just drops it
+    variables:
+      kept: '{%- set ns = namespace(out=[]) -%}
+
+        {%- for e in current -%}
+
+        {%- if needle not in (e | lower) -%}
+
+        {%- set ns.out = ns.out + [e] -%}
+
+        {%- endif -%}
+
+        {%- endfor -%}
+
+        {{ ns.out }}'
+  - variables:
+      updated: '{{ kept if (forget | default(false, true)) else ([entry] + kept)[:12]
+        }}'
+  - alias: An empty list is not allowed, so fall back to the placeholder
+    action: input_select.set_options
+    target:
+      entity_id: input_select.assistant_memory
+    data:
+      options: '{{ updated if (updated | length) > 0 else [''(none)''] }}'
+  - variables:
+      result:
+        forgot: '{{ forget | default(false, true) }}'
+        stored: '{{ updated | length }}'
+        say: '{%- if forget | default(false, true) -%}
+
+          {{ ''Forgotten.'' if (kept | length) < (current | length) else ''I do not
+          have anything remembered like that.'' }}
+
+          {%- else -%}
+
+          I will remember that.
+
+          {%- endif -%}'
+  - stop: Memory updated
+    response_variable: result
