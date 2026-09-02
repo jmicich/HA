@@ -842,6 +842,15 @@ to the MA server. **Restart the MA add-on.** Diagnosed once by finding
 connection-refused errors in the add-on log against an address the working
 integration was not using.
 
+**An offline speaker is reported as an absent one.** An unavailable Music
+Assistant player loses its attributes, so it drops out of the resolver's
+`mass_player_type` filter entirely and the room reads as having no speaker at
+all. Observed 2026-09-02: "play some jazz in the bedroom" answered "the bedroom
+doesn't have a speaker" while the WiiM was merely offline. The refusal is safe,
+but the wording sends you to check room assignments when the real cause is the
+MA address-caching trap below, whose fix is restarting the MA add-on. Check
+`state` before believing a room is empty.
+
 **HA caches device names at discovery.** Renaming a speaker's room in the
 vendor app does not propagate. HA keeps the discovery-time name
 indefinitely, which reads exactly like "the user never named it." **Reload
@@ -1098,6 +1107,13 @@ also puts `custom_components/` at the top level, where HA would not load it —
 that needs reconciling first.
 
 ## Regression suite
+
+**Record what the assistant currently remembers before running this.**
+The memory block from `assistant-memory.md` renders into the tier-1 prompt,
+so remembering or forgetting anything changes the prompt exactly as an edit
+would — and invalidates this suite on the same rule. Nobody has to touch a
+prompt for a run to go stale now; someone saying "remember that…" is enough.
+A run is only reproducible if the memory fixture was written down with it.
 
 Run via `conversation.process` with `return_response: true`; verify with a
 state read, not the spoken reply. **Run each case at least three times** —

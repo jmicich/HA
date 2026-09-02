@@ -391,6 +391,13 @@ the ground truth before using them:
 
 ## Regression suite
 
+**Record what the assistant currently remembers before running this.**
+The memory block from `assistant-memory.md` renders into the tier-1 prompt,
+so remembering or forgetting anything changes the prompt exactly as an edit
+would — and invalidates this suite on the same rule. Nobody has to touch a
+prompt for a run to go stale now; someone saying "remember that…" is enough.
+A run is only reproducible if the memory fixture was written down with it.
+
 **Verification method differs fundamentally from the music suite.** There is
 no side-effect state to read — the answer *is* the artifact. So:
 
