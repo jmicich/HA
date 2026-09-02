@@ -419,6 +419,11 @@ class VoiceCommandSegmenter:
         return True
 
 
+# Speech left after the cut below this is treated as a clean ending rather
+# than a truncation: a couple of stray chunks is noise, not a lost word.
+MEANINGFUL_LOSS_MS = 150
+
+
 @dataclass
 class HaVerdict:
     cut_ms: int | None
@@ -426,11 +431,20 @@ class HaVerdict:
     clip_ms: int
     detector: str
     exact: bool
+    speech_after_cut_ms: int = 0
 
     @property
     def truncated(self) -> bool:
-        """True if HA stopped listening while audio remained."""
-        return self.cut_ms is not None and self.cut_ms < self.clip_ms
+        """True if HA stopped listening while someone was still talking.
+
+        Deliberately not "stopped before the file ended". Every recording has
+        trailing silence, so that definition marks a cleanly-finished sentence
+        as truncated and inflates the one number this whole probe exists to
+        produce. What matters is whether *speech* was lost.
+        """
+        if self.cut_ms is None:
+            return False
+        return self.speech_after_cut_ms >= MEANINGFUL_LOSS_MS
 
     @property
     def lost_ms(self) -> int:
@@ -441,26 +455,38 @@ class HaVerdict:
 
 def ha_cut_point(clip: Clip, detector: SpeechDetector,
                  silence_seconds: float) -> HaVerdict:
-    """Find where HA's pipeline would have stopped consuming this clip."""
+    """Find where HA's pipeline would have stopped consuming this clip.
+
+    Keeps reading past the cut, because what was lost after it is the
+    measurement — the cut point alone cannot distinguish a sentence that
+    ended from a sentence that was interrupted.
+    """
     segmenter = VoiceCommandSegmenter(silence_seconds=silence_seconds)
     chunk_seconds = VAD_CHUNK_MS / 1000.0
-    elapsed_ms = 0
+    chunks = _iter_chunks(clip.pcm, clip.rate, VAD_CHUNK_MS)
+    clip_ms = int(clip.duration_s * 1000)
 
-    for chunk in _iter_chunks(clip.pcm, clip.rate, VAD_CHUNK_MS):
+    for index, chunk in enumerate(chunks):
         if not segmenter.process(chunk_seconds, detector.probability(chunk)):
+            speech_after = sum(
+                VAD_CHUNK_MS
+                for later in chunks[index + 1:]
+                if detector.probability(later)
+                > segmenter.in_command_speech_threshold
+            )
             return HaVerdict(
-                cut_ms=elapsed_ms + VAD_CHUNK_MS,
+                cut_ms=(index + 1) * VAD_CHUNK_MS,
                 timed_out=segmenter.timed_out,
-                clip_ms=int(clip.duration_s * 1000),
+                clip_ms=clip_ms,
                 detector=detector.name,
                 exact=detector.exact,
+                speech_after_cut_ms=speech_after,
             )
-        elapsed_ms += VAD_CHUNK_MS
 
     return HaVerdict(
         cut_ms=None,
         timed_out=False,
-        clip_ms=int(clip.duration_s * 1000),
+        clip_ms=clip_ms,
         detector=detector.name,
         exact=detector.exact,
     )
@@ -556,7 +582,8 @@ async def probe_muse(clip: Clip, api_key: str, mode: str,
 
             ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
             if "type" in ack:  # the ack is the only frame without one
-                verdict.error = f"handshake rejected: {ack}"
+                _apply_event(verdict, ack, 0)
+                verdict.error = f"handshake rejected: {verdict.error or ack}"
                 return verdict
 
             started = time.monotonic()
@@ -636,7 +663,12 @@ def _apply_event(verdict: MuseVerdict, event: dict, wall_ms: int) -> None:
         })
 
     elif kind == "error":
-        verdict.error = event.get("message", "unspecified server error")
+        # Keep the machine-readable code. The prose alone ("Billing
+        # verification failed") does not say whether to fix an account, wait
+        # out a rate limit, or retry, and the code does.
+        message = event.get("message", "unspecified server error")
+        code = event.get("errorCode") or event.get("errorType")
+        verdict.error = f"{message} [{code}]" if code else message
 
 
 # --------------------------------------------------------------------------
@@ -675,7 +707,7 @@ def render_report(rows: list[dict], ran_muse: bool, exact_vad: bool) -> str:
         if ran_muse:
             muse = row.get("muse") or {}
             if muse.get("error"):
-                line += f" {'ERROR':>9} {'--':>8}  {muse['error'][:60]}"
+                line += f" {'ERROR':>9} {'--':>8}  {muse['error'][:110]}"
             else:
                 line += (
                     f" {_fmt_ms(muse.get('speech_end_ms')):>9} "

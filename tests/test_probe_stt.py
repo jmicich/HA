@@ -114,8 +114,40 @@ def test_speech_then_silence_cuts_after_the_silence_window():
     # 0.3s of speech + 0.7s of silence, within one chunk of float drift.
     assert 980 <= verdict.cut_ms <= 1020
     assert not verdict.timed_out
+    # Nothing but silence follows, so this is a sentence that ended, not one
+    # that was interrupted. Counting it as truncated would inflate the only
+    # number the build decision rests on.
+    assert not verdict.truncated
+    assert verdict.lost_ms == 0
+
+
+def test_trailing_silence_is_not_counted_as_a_truncation():
+    """Every recording ends in silence; that must not read as lost speech."""
+    chunk_s = VAD_CHUNK_MS / 1000
+    speech = [1.0] * int(1.0 / chunk_s)
+
+    verdict = ha_cut_point(
+        silent_clip(4.0), ScriptedDetector(speech), silence_seconds=0.7)
+
+    assert verdict.cut_ms is not None and verdict.cut_ms < verdict.clip_ms
+    assert verdict.speech_after_cut_ms == 0
+    assert not verdict.truncated
+
+
+def test_speech_after_the_cut_is_a_truncation():
+    """The case the probe exists to count: someone was still talking."""
+    chunk_s = VAD_CHUNK_MS / 1000
+    first = [1.0] * int(1.0 / chunk_s)
+    gap = [0.0] * int(0.9 / chunk_s)
+    second = [1.0] * int(2.0 / chunk_s)
+
+    verdict = ha_cut_point(
+        silent_clip(6.0), ScriptedDetector(first + gap + second),
+        silence_seconds=0.7)
+
     assert verdict.truncated
-    assert verdict.lost_ms == verdict.clip_ms - verdict.cut_ms
+    assert verdict.speech_after_cut_ms >= 1900
+    assert verdict.lost_ms > 0
 
 
 def test_relaxed_sensitivity_buys_more_silence_but_not_much():
@@ -636,3 +668,36 @@ def test_an_unreachable_endpoint_reports_rather_than_raises():
 
     assert verdict.error is not None
     assert verdict.transcript == ""
+
+
+def test_an_error_keeps_its_machine_readable_code():
+    """Prose alone does not say whether to fix an account or wait out a limit."""
+    verdict = MuseVerdict()
+
+    _apply_event(verdict, {"type": "error", "message": "Billing verification failed",
+                           "errorType": "billing_error",
+                           "errorCode": "billing_not_configured"}, wall_ms=5)
+
+    assert verdict.error == "Billing verification failed [billing_not_configured]"
+
+
+def test_a_refused_handshake_keeps_the_code_too():
+    clip = Clip(path=Path("m.wav"), pcm=b"\x00\x00" * 1600, rate=HA_SAMPLE_RATE)
+    serve = pytest.importorskip("websockets.asyncio.server").serve
+
+    async def handler(websocket):
+        await websocket.recv()
+        await websocket.send(json.dumps({
+            "type": "error", "message": "Billing verification failed",
+            "errorCode": "billing_not_configured"}))
+
+    async def scenario():
+        async with serve(handler, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            return await probe_muse(clip, "k", "ENDPOINTING",
+                                    endpoint=f"ws://127.0.0.1:{port}")
+
+    verdict = asyncio.run(scenario())
+
+    assert "billing_not_configured" in verdict.error
+    assert "handshake rejected" in verdict.error
