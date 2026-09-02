@@ -842,14 +842,51 @@ to the MA server. **Restart the MA add-on.** Diagnosed once by finding
 connection-refused errors in the add-on log against an address the working
 integration was not using.
 
-**An offline speaker is reported as an absent one.** An unavailable Music
-Assistant player loses its attributes, so it drops out of the resolver's
-`mass_player_type` filter entirely and the room reads as having no speaker at
-all. Observed 2026-09-02: "play some jazz in the bedroom" answered "the bedroom
-doesn't have a speaker" while the WiiM was merely offline. The refusal is safe,
-but the wording sends you to check room assignments when the real cause is the
-MA address-caching trap below, whose fix is restarting the MA add-on. Check
-`state` before believing a room is empty.
+**An offline speaker used to be reported as an absent one — fixed
+2026-09-02.** An unavailable Music Assistant player loses its attributes, so it
+dropped out of the resolver's `mass_player_type` filter entirely and the room
+read as having no speaker at all. Observed the same day: "play some jazz in the
+bedroom" answered "the bedroom doesn't have a speaker" while the WiiM was
+merely offline — sending you to check room assignments when the real cause was
+the MA address-caching trap below.
+
+**The fix was to stop identifying MA players by an attribute they lose when
+they break.** `integration_entities('music_assistant')` lists them whether or
+not they are available, which `selectattr('attributes.mass_player_type',
+'defined')` cannot. Verified before building on it: an unavailable entity is
+still present in `states.media_player` and still carries `friendly_name`, so
+the existing object-based resolver kept working with only its filter swapped.
+
+Two lists now exist rather than one, and the distinction is the point:
+
+- **Playable** — MA players, minus `no_music`, minus anything `unavailable`.
+  What the resolver matches against, because you genuinely cannot play to an
+  offline speaker.
+- **Known** — the same list *including* unavailable ones, each tagged
+  `status: available` or `status: offline`. What the fail-loud guard returns,
+  so the model can tell the two situations apart.
+
+The guard's error names the distinction explicitly, because the model
+otherwise has no reason to treat them differently: *"If the only speaker in
+that room has status offline, say that speaker is OFFLINE - do not say the room
+has no speaker, because those are different problems with different fixes and
+one sends the user looking in the wrong place."*
+
+Verified against a genuinely unavailable MA player, temporarily assigned to a
+room as the fixture:
+
+| Request | Before | After |
+| --- | --- | --- |
+| room whose only speaker is offline | "the kitchen doesn't have a speaker" | ✅ "The kitchen speaker is offline. I can play in the living room, dining room, or bedroom instead." |
+| room with genuinely no speaker | "the attic doesn't have a speaker" | ✅ unchanged |
+| normal room, live speaker | plays | ✅ plays, single call, no regression |
+
+**The general lesson, and it has now bitten twice:** identifying something by a
+runtime attribute means losing it in exactly the state you most need to
+describe. Defect #4 was the model being handed names without rooms; this was
+the resolver being handed a world with its broken devices deleted from it.
+Prefer a registry-level identity — `integration_entities`, `label_entities` —
+over an attribute that only exists while things are working.
 
 **HA caches device names at discovery.** Renaming a speaker's room in the
 vendor app does not propagate. HA keeps the discovery-time name
@@ -1184,6 +1221,7 @@ model or prompt changes, separately from correctness.
 | Named device | "play [artist] on the [device]" — including a device whose primary name the model does not surface; it must call the tool and use the guard, not refuse |
 | Named room, both rooms | "play X in the [room]" for **each** room that has a speaker — a fix that biases every request to one room passes the first and fails the second |
 | STT variant | mangled artist name, as speech-to-text would garble it |
+| Room whose only speaker is OFFLINE | must say the speaker is offline, **not** that the room has no speaker — the two have different fixes. Needs an unavailable MA player assigned to a room as the fixture |
 | Room with no speaker | must refuse, not substitute. **Use the Kitchen or the Attic** — the Bedroom gained a speaker on 2026-08-24 and is no longer empty |
 | Nonsense query | must not fuzzy-match to real content |
 | Pause, no target | |
