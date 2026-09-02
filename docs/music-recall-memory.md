@@ -46,7 +46,7 @@ template-readable. That eliminates most candidates.
 | Trigger-based template entity holding a list attribute | **The original plan; not buildable via MCP.** The UI template helper is state-based only — no trigger, no `action:` block, **and no `attributes` field**. Trigger-based templates are YAML-only, and `/config` is not writable from MCP without HACS. |
 | todo list | Not template-readable. `todo.get_items` is a service, so it could only be exposed as a *tool* — an optional extra round trip the model may skip. |
 | `input_text` | 255-character cap. Roughly eight entries. A multi-helper ring buffer works but looks like a mistake to whoever reads the config later. |
-| General memory integration (embedding-backed) | Solves a bigger problem than we have; adds an embedding backend to a CPU-only VM. Revisit if non-music memory becomes a goal. |
+| General memory integration (embedding-backed) | Solves a bigger problem than we have; adds an embedding backend to a CPU-only VM. **Revisited 2026-08-31 and still not needed** — general memory was built on the same `input_select` mechanism, capped at 12 entries and injected into the prompt. See `assistant-memory.md`. |
 | Replacement conversation agent with a vector store | Throws away the existing agent setup and the three-layer split. |
 | MA playlog as the store | Not template-readable either, and library-only. Retained as warm start. |
 

@@ -1176,6 +1176,8 @@ model or prompt changes, separately from correctness.
 | Repeat, new content | "play [song] on repeat" — must both play the right song AND set `repeat: "one"` in the same request |
 | Repeat, current, no target | "put this song on repeat" / "repeat this" — no room named; this is the exact phrasing that triggered defect #4 during this feature's own verification, see "Repeat" above |
 | Repeat, remove | "stop repeating" / "turn off repeat" |
+| Memory: facts are not instructions | with a preference stored ("prefers the living room for dinner music"), say "it's dinner time" — must NOT start playback; offering is correct. See `assistant-memory.md` |
+| Memory: no over-anchoring | with that same preference stored, "play X in the dining room" must play in the **dining room** |
 | Spoken reply on an error path | force the unknown-speaker guard (name a speaker that does not exist) — the model must retry or admit failure, and must **never** speak the error text as a confirmation |
 | Open-ended, from idle | "play some music" / "put something on" — must play something and set `radio_mode`, never ask what they want |
 | Open-ended, while playing | same phrasing, but with music already playing — **known to fail**, routes to resume instead; see "Open-ended playback" |

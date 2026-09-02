@@ -2,6 +2,7 @@
 
 Status as of 2026-08-21. Orientation doc: read this first, then the
 feature-specific docs (`voice-and-music.md`, `music-recall-memory.md`,
+`assistant-memory.md`,
 `general-knowledge-search.md`, `prompt-caching.md`, `dev-environment.md`,
 `wake-word-findings.md`).
 
