@@ -10,8 +10,9 @@ play_music:
   - alias: Resolve target player
     variables:
       p: '{{ player | default('''', true) | string }}'
-      matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
-        ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music''))
+      matched: '{%- set candidates = states.media_player | selectattr(''entity_id'', ''in'',
+        integration_entities(''music_assistant'')) | rejectattr(''entity_id'', ''in'',
+        label_entities(''no_music'')) | rejectattr(''state'', ''eq'', ''unavailable'')
         | list -%}
 
         {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
@@ -49,17 +50,23 @@ play_music:
     - variables:
         err:
           error: No speaker is named '{{ p }}'. Nothing was played. Each entry
-            below gives a speaker's exact name AND the room it is in. Retry with
-            the name whose room matches the room the user asked for - do not pick
-            by which name looks most like '{{ p }}'. If no listed room matches,
-            say that room has no speaker instead of substituting another.
+            below gives a speaker's exact name, the room it is in, and whether it
+            is available. Retry with the name whose room matches the room the user
+            asked for - do not pick by which name looks most like '{{ p }}'. If the
+            only speaker in that room has status offline, say that speaker is
+            OFFLINE - do not say the room has no speaker, because those are
+            different problems with different fixes and one sends the user looking
+            in the wrong place. If no room in the list matches at all, then say
+            that room has no speaker. Either way, never substitute another room.
           speakers: '{%- set ns = namespace(items=[]) -%}
 
-            {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music'')) -%}
+            {%- for c in states.media_player | selectattr(''entity_id'', ''in'',
+            integration_entities(''music_assistant'')) | rejectattr(''entity_id'', ''in'',
+            label_entities(''no_music'')) -%}
 
             {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
-            | default(''no room assigned'', true)}] -%}
+            | default(''no room assigned'', true), ''status'': (''offline'' if c.state
+            == ''unavailable'' else ''available'')}] -%}
 
             {%- endfor -%}
 
@@ -489,8 +496,9 @@ clarify_music_choice:
   - alias: Resolve target player
     variables:
       p: '{{ player | default('''', true) | string }}'
-      matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
-        ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music''))
+      matched: '{%- set candidates = states.media_player | selectattr(''entity_id'', ''in'',
+        integration_entities(''music_assistant'')) | rejectattr(''entity_id'', ''in'',
+        label_entities(''no_music'')) | rejectattr(''state'', ''eq'', ''unavailable'')
         | list -%}
 
         {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
@@ -526,17 +534,23 @@ clarify_music_choice:
     - variables:
         err:
           error: No speaker is named '{{ p }}'. Nothing was played. Each entry
-            below gives a speaker's exact name AND the room it is in. Retry with
-            the name whose room matches the room the user asked for - do not pick
-            by which name looks most like '{{ p }}'. If no listed room matches,
-            say that room has no speaker instead of substituting another.
+            below gives a speaker's exact name, the room it is in, and whether it
+            is available. Retry with the name whose room matches the room the user
+            asked for - do not pick by which name looks most like '{{ p }}'. If the
+            only speaker in that room has status offline, say that speaker is
+            OFFLINE - do not say the room has no speaker, because those are
+            different problems with different fixes and one sends the user looking
+            in the wrong place. If no room in the list matches at all, then say
+            that room has no speaker. Either way, never substitute another room.
           speakers: '{%- set ns = namespace(items=[]) -%}
 
-            {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music'')) -%}
+            {%- for c in states.media_player | selectattr(''entity_id'', ''in'',
+            integration_entities(''music_assistant'')) | rejectattr(''entity_id'', ''in'',
+            label_entities(''no_music'')) -%}
 
             {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
-            | default(''no room assigned'', true)}] -%}
+            | default(''no room assigned'', true), ''status'': (''offline'' if c.state
+            == ''unavailable'' else ''available'')}] -%}
 
             {%- endfor -%}
 
@@ -946,8 +960,9 @@ start_dj_session:
   - alias: Resolve target player
     variables:
       p: '{{ player | default('''', true) | string }}'
-      matched: '{%- set candidates = states.media_player | selectattr(''attributes.mass_player_type'',
-        ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music''))
+      matched: '{%- set candidates = states.media_player | selectattr(''entity_id'', ''in'',
+        integration_entities(''music_assistant'')) | rejectattr(''entity_id'', ''in'',
+        label_entities(''no_music'')) | rejectattr(''state'', ''eq'', ''unavailable'')
         | list -%}
 
         {%- set direct = (candidates | selectattr(''entity_id'', ''eq'', p) | map(attribute=''entity_id'')
@@ -983,17 +998,23 @@ start_dj_session:
     - variables:
         err:
           error: No speaker is named '{{ p }}'. No session was started. Each entry
-            below gives a speaker's exact name AND the room it is in. Retry with
-            the name whose room matches the room the user asked for - do not pick
-            by which name looks most like '{{ p }}'. If no listed room matches,
-            say that room has no speaker instead of substituting another.
+            below gives a speaker's exact name, the room it is in, and whether it
+            is available. Retry with the name whose room matches the room the user
+            asked for - do not pick by which name looks most like '{{ p }}'. If the
+            only speaker in that room has status offline, say that speaker is
+            OFFLINE - do not say the room has no speaker, because those are
+            different problems with different fixes and one sends the user looking
+            in the wrong place. If no room in the list matches at all, then say
+            that room has no speaker. Either way, never substitute another room.
           speakers: '{%- set ns = namespace(items=[]) -%}
 
-            {%- for c in states.media_player | selectattr(''attributes.mass_player_type'',
-            ''defined'') | rejectattr(''entity_id'', ''in'', label_entities(''no_music'')) -%}
+            {%- for c in states.media_player | selectattr(''entity_id'', ''in'',
+            integration_entities(''music_assistant'')) | rejectattr(''entity_id'', ''in'',
+            label_entities(''no_music'')) -%}
 
             {%- set ns.items = ns.items + [{''name'': c.name, ''room'': area_name(c.entity_id)
-            | default(''no room assigned'', true)}] -%}
+            | default(''no room assigned'', true), ''status'': (''offline'' if c.state
+            == ''unavailable'' else ''available'')}] -%}
 
             {%- endfor -%}
 
