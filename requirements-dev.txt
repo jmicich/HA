@@ -6,6 +6,11 @@ PyYAML>=6.0
 
 # probe_stt.py talks to Meta's realtime ASR over a websocket.
 websockets>=13
+# Verifies TLS against the OS trust store. Needed wherever a proxy or
+# antivirus inspects TLS: Python's bundled OpenSSL rejects the intercepting
+# CA that Windows and curl both accept, and every connection fails with
+# CERTIFICATE_VERIFY_FAILED while the browser works fine.
+truststore>=0.9
 # Deliberately NOT listed as a requirement: pymicro-vad. It is what Home
 # Assistant itself pins, and installing it gives probe_stt.py byte-exact
 # parity with HA's VAD decision — but it ships no wheels and needs a C++

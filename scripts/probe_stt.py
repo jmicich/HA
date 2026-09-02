@@ -68,6 +68,7 @@ import json
 import math
 import os
 import statistics
+import ssl
 import struct
 import sys
 import time
@@ -495,6 +496,29 @@ class MuseVerdict:
         return self.complete_wall_ms - self.speech_end_ms
 
 
+def _ssl_context(endpoint: str):
+    """Verify TLS against the OS trust store when `truststore` is available.
+
+    Python's bundled OpenSSL and the Windows certificate store disagree about
+    some CA certificates, and a TLS-inspecting proxy or antivirus makes that
+    disagreement fatal: every https/wss connection fails with
+    CERTIFICATE_VERIFY_FAILED while curl and the browser work fine, which
+    reads as an endpoint outage and is not one.
+
+    `truststore` resolves it by verifying through the platform store, the same
+    way curl does. It is optional; without it the default context is used.
+    Verification is never disabled — an unverified probe would be measuring a
+    connection nobody should trust the numbers from.
+    """
+    if not endpoint.startswith("wss://"):
+        return None  # a plain ws:// mock takes no context at all
+    try:
+        import truststore  # noqa: PLC0415 - optional dependency
+    except ImportError:
+        return None
+    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+
 async def probe_muse(clip: Clip, api_key: str, mode: str,
                      keywords: list[str] | None = None,
                      languages: list[str] | None = None,
@@ -508,6 +532,7 @@ async def probe_muse(clip: Clip, api_key: str, mode: str,
     import websockets  # noqa: PLC0415 - optional dependency
 
     verdict = MuseVerdict()
+    ssl_context = _ssl_context(endpoint)
     encoding = "PCM_24KHZ" if clip.rate == 24000 else "PCM_16KHZ"
     handshake = {
         "authorization": {"accessToken": f"Bearer {api_key}"},
@@ -525,7 +550,8 @@ async def probe_muse(clip: Clip, api_key: str, mode: str,
     frame_bytes = int(clip.rate * HA_SAMPLE_WIDTH * SEND_FRAME_MS / 1000)
 
     try:
-        async with websockets.connect(endpoint, max_size=None) as ws:
+        async with websockets.connect(
+            endpoint, max_size=None, ssl=ssl_context) as ws:
             await ws.send(json.dumps(handshake))
 
             ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))

@@ -148,10 +148,15 @@ never echoed into the report or the JSON. A test asserts the last part.
   with Otsu's method plus a guard for clips with no bimodality to find. The
   lesson generalises — any statistic that assumes what fraction of the input
   is signal will invert on the inputs that matter most.
-- **TLS interception breaks the run before it starts.** A proxy that rewrites
-  certificates produces `CERTIFICATE_VERIFY_FAILED: Basic Constraints of CA
-  cert not marked critical`, which looks like an endpoint problem and is not.
-  Test the trust store against any public host before blaming Meta.
+- **TLS interception breaks the run before it starts, and the error blames
+  the wrong thing.** Where a proxy or antivirus inspects TLS, Python's bundled
+  OpenSSL rejects the intercepting CA that Windows and curl both accept:
+  every connection fails with `CERTIFICATE_VERIFY_FAILED` while the browser
+  works fine, which reads as an endpoint outage. Confirm by trying any
+  unrelated public host — if google.com fails too, it is not Meta. The probe
+  uses `truststore` to verify through the platform store, which resolves it.
+  **Verification is never disabled**; a probe that skips it would be
+  reporting numbers from a connection nobody should trust.
 
 ### What was and was not verified
 
