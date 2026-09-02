@@ -1189,6 +1189,17 @@ remember_this:
       required: false
       selector:
         boolean: {}
+    replaces:
+      name: Replaces
+      description: When this fact SUPERSEDES something already remembered - the same
+        thing has changed, moved, or been renamed - pass enough of the OLD wording
+        here to identify it, and it will be dropped as the new one is stored. Use
+        this whenever you are recording a new value for something already known.
+        Without it the old value stays alongside the new one, and two contradictory
+        facts are worse than either alone.
+      required: false
+      selector:
+        text: null
   sequence:
   - alias: Read current memory, dropping the placeholder and any near-duplicate
     variables:
@@ -1196,13 +1207,14 @@ remember_this:
         true) | reject(''eq'', ''(none)'') | list }}'
       entry: '{{ now().strftime(''%Y-%m-%d'') ~ '' | '' ~ (fact | trim) }}'
       needle: '{{ fact | trim | lower }}'
+      rneedle: '{{ replaces | default('''', true) | trim | lower }}'
   - alias: Remembering replaces a matching entry; forgetting just drops it
     variables:
       kept: '{%- set ns = namespace(out=[]) -%}
 
         {%- for e in current -%}
 
-        {%- if needle not in (e | lower) -%}
+        {%- if needle not in (e | lower) and (rneedle == '''' or rneedle not in (e | lower)) -%}
 
         {%- set ns.out = ns.out + [e] -%}
 
