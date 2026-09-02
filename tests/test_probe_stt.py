@@ -361,21 +361,48 @@ def test_a_run_with_no_truncation_says_it_proves_nothing():
     assert "says nothing either way" in report
 
 
-def test_verdict_counts_only_clips_muse_actually_outlasted():
+def test_verdict_separates_a_real_rescue_from_a_split_utterance():
+    """The distinction the first live run turned on.
+
+    Muse can endpoint in the same place HA cuts and then emit further turns.
+    The session outlives HA's cut either way, so a naive comparison scores
+    both as wins — but only one of them means the model kept listening. The
+    other needs an integration that waits for and joins the later turns,
+    which HA's one-transcript-per-turn STT interface does not do.
+    """
     rows = [
         _row(cut_ms=1000, clip_ms=5000, lost_ms=4000, truncated=True),
         _row(cut_ms=1000, clip_ms=5000, lost_ms=4000, truncated=True),
     ]
     rows[0]["clip"] = "rescued.wav"
-    rows[0]["muse"] = {"transcript": "kept going", "speech_end_ms": 4800,
+    rows[0]["muse"] = {"transcript": "kept going", "endpoint_ms": 4800,
+                       "turn_count": 1, "model_endpointed": True,
                        "endpoint_lag_ms": 150, "error": None}
-    rows[1]["clip"] = "agreed.wav"
-    rows[1]["muse"] = {"transcript": "stopped too", "speech_end_ms": 950,
+    rows[1]["clip"] = "split.wav"
+    rows[1]["muse"] = {"transcript": "first half second half",
+                       "endpoint_ms": 1050, "turn_count": 2,
+                       "model_endpointed": True,
                        "endpoint_lag_ms": 140, "error": None}
 
     report = render_report(rows, ran_muse=True, exact_vad=True)
 
-    assert "on 1 of 2 truncated clips" in report
+    assert "on 2 truncated clips" in report
+    assert "kept listening past HA's cut:      1" in report
+    assert "endpointed too, but emitted turns: 1" in report
+    assert "will" in report and "not do that for you" in report
+
+
+def test_agreeing_within_noise_is_not_scored_as_keeping_listening():
+    """A few tens of milliseconds later is agreement, not a rescue."""
+    rows = [_row(cut_ms=1000, clip_ms=5000, lost_ms=4000, truncated=True)]
+    rows[0]["muse"] = {"transcript": "same", "endpoint_ms": 1100,
+                       "turn_count": 1, "model_endpointed": True,
+                       "endpoint_lag_ms": 120, "error": None}
+
+    report = render_report(rows, ran_muse=True, exact_vad=True)
+
+    assert "kept listening past HA's cut:      0" in report
+    assert "endpointed too, but emitted turns: 0" in report
 
 
 def test_a_muse_error_does_not_sink_the_whole_report():
@@ -701,3 +728,108 @@ def test_a_refused_handshake_keeps_the_code_too():
 
     assert "billing_not_configured" in verdict.error
     assert "handshake rejected" in verdict.error
+
+
+def test_multi_turn_transcripts_are_joined_not_overwritten():
+    """Regression: keeping only the last turn silently halved an utterance.
+
+    A live ENDPOINTING run on a sentence with a 900ms pause returned two
+    turns. The report kept the second and dropped the first, which reads as
+    a plausible transcript and is the back half of what someone said.
+    """
+    verdict = MuseVerdict()
+
+    _apply_event(verdict, {"type": "speechEnd", "turnId": 0,
+                           "audioProcessedMs": 3100}, wall_ms=3200)
+    _apply_event(verdict, {"type": "speechComplete", "turnId": 0,
+                           "audioProcessedMs": 3100,
+                           "transcript": "turn the kitchen lights down"},
+                 wall_ms=3300)
+    _apply_event(verdict, {"type": "speechEnd", "turnId": 1,
+                           "audioProcessedMs": 6140}, wall_ms=6200)
+    _apply_event(verdict, {"type": "speechComplete", "turnId": 1,
+                           "audioProcessedMs": 6140,
+                           "transcript": "and put some jazz on"}, wall_ms=6300)
+
+    assert verdict.transcript == "turn the kitchen lights down and put some jazz on"
+    assert verdict.turn_count == 2
+
+
+def test_the_first_endpoint_is_what_compares_to_has_cut():
+    """HA's STT interface returns one transcript per turn, so the first
+    boundary is the comparable number — not the last turn's end."""
+    verdict = MuseVerdict()
+
+    _apply_event(verdict, {"type": "speechEnd", "turnId": 0,
+                           "audioProcessedMs": 3100}, wall_ms=3200)
+    _apply_event(verdict, {"type": "speechComplete", "turnId": 0,
+                           "audioProcessedMs": 3100, "transcript": "first"},
+                 wall_ms=3300)
+    _apply_event(verdict, {"type": "speechEnd", "turnId": 1,
+                           "audioProcessedMs": 6140}, wall_ms=6200)
+
+    assert verdict.first_speech_end_ms == 3100
+    assert verdict.speech_end_ms == 6140
+    assert verdict.endpoint_ms == 3100
+    # Lag belongs to the first turn too: 3300ms wall minus 3100ms of audio.
+    assert verdict.endpoint_lag_ms == 200
+
+
+def test_push_to_talk_still_reports_a_single_endpoint():
+    """PUSH_TO_TALK emits no turns at all; the final transcript stands in."""
+    verdict = MuseVerdict()
+
+    _apply_event(verdict, {"type": "transcript", "transcript": "the whole thing",
+                           "final": True, "audioProcessedMs": 7200},
+                 wall_ms=7230)
+
+    assert verdict.turn_count == 0
+    assert verdict.endpoint_ms == 7200
+    assert verdict.transcript == "the whole thing"
+
+
+def test_push_to_talk_is_not_scored_as_keeping_listening():
+    """Regression: PUSH_TO_TALK always "outlasted" HA's cut, meaninglessly.
+
+    That mode transcribes until the client half-closes, so its endpoint is
+    wherever the harness stopped sending. Scoring it as a rescue credits the
+    model for a decision it never made.
+    """
+    rows = [_row(cut_ms=1000, clip_ms=7000, lost_ms=6000, truncated=True)]
+    rows[0]["muse"] = {"transcript": "the whole thing", "endpoint_ms": 7200,
+                       "turn_count": 0, "model_endpointed": False,
+                       "endpoint_lag_ms": 30, "error": None}
+
+    report = render_report(rows, ran_muse=True, exact_vad=True)
+
+    assert "kept listening past HA's cut:      0" in report
+    assert "not scorable (1)" in report
+    assert "does not endpoint" in report
+
+
+def test_endpointing_runs_remain_scorable():
+    rows = [_row(cut_ms=1000, clip_ms=7000, lost_ms=6000, truncated=True)]
+    rows[0]["muse"] = {"transcript": "kept going", "endpoint_ms": 6000,
+                       "turn_count": 1, "model_endpointed": True,
+                       "endpoint_lag_ms": 150, "error": None}
+
+    report = render_report(rows, ran_muse=True, exact_vad=True)
+
+    assert "kept listening past HA's cut:      1" in report
+    assert "not scorable" not in report
+
+
+def test_model_endpointed_is_false_without_speech_boundary_events():
+    verdict = MuseVerdict()
+    _apply_event(verdict, {"type": "transcript", "transcript": "all of it",
+                           "final": True, "audioProcessedMs": 7200}, wall_ms=7230)
+
+    assert verdict.model_endpointed is False
+
+
+def test_model_endpointed_is_true_once_a_boundary_arrives():
+    verdict = MuseVerdict()
+    _apply_event(verdict, {"type": "speechEnd", "turnId": 0,
+                           "audioProcessedMs": 3100}, wall_ms=3150)
+
+    assert verdict.model_endpointed is True

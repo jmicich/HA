@@ -419,6 +419,10 @@ class VoiceCommandSegmenter:
         return True
 
 
+# How much later than HA's cut Muse must endpoint before it counts as
+# genuinely having kept listening rather than agreeing within noise.
+ENDPOINT_MARGIN_MS = 250
+
 # Speech left after the cut below this is treated as a clean ending rather
 # than a truncation: a couple of stray chunks is noise, not a lost word.
 MEANINGFUL_LOSS_MS = 150
@@ -502,6 +506,7 @@ class MuseVerdict:
     transcript: str = ""
     speech_start_ms: int | None = None
     speech_end_ms: int | None = None
+    first_speech_end_ms: int | None = None
     complete_ms: int | None = None
     first_partial_wall_ms: int | None = None
     complete_wall_ms: int | None = None
@@ -510,13 +515,48 @@ class MuseVerdict:
     error: str | None = None
 
     @property
-    def endpoint_lag_ms(self) -> int | None:
-        """Wall-clock delay between the audio ending and text arriving.
+    def turn_count(self) -> int:
+        return len(self.turns)
 
-        This is the number a listener actually feels. HA's equivalent is its
-        700ms silence timer plus whatever the STT round trip costs, so the
-        two are directly comparable.
+    @property
+    def model_endpointed(self) -> bool:
+        """True if the *model* decided where speech ended.
+
+        PUSH_TO_TALK never does: it transcribes until the client half-closes,
+        so its "endpoint" is wherever the caller stopped sending. Comparing
+        that against HA's cut always looks like a win and means nothing — the
+        harness stopped, not the model.
         """
+        return self.first_speech_end_ms is not None or bool(self.turns)
+
+    @property
+    def endpoint_ms(self) -> int | None:
+        """Where Muse *first* declared speech over.
+
+        This — not the last turn's end — is the number comparable to HA's
+        cut, because Home Assistant's STT interface returns one transcript
+        per turn. If Muse endpoints at the same place HA does and then keeps
+        emitting further turns, an integration still has to decide what to
+        do with them; the session outlasting HA's cut is not the same thing
+        as the model having kept listening.
+        """
+        if self.first_speech_end_ms is not None:
+            return self.first_speech_end_ms
+        return self.speech_end_ms
+
+    @property
+    def endpoint_lag_ms(self) -> int | None:
+        """Wall-clock delay between the first endpoint and its text arriving.
+
+        This is the number a listener feels. HA's equivalent is its 700ms
+        silence timer plus whatever the STT round trip costs, so the two are
+        directly comparable.
+        """
+        if self.turns:
+            first = self.turns[0]
+            if first.get("wall_ms") is not None and first.get(
+                    "audio_processed_ms") is not None:
+                return first["wall_ms"] - first["audio_processed_ms"]
         if self.complete_wall_ms is None or self.speech_end_ms is None:
             return None
         return self.complete_wall_ms - self.speech_end_ms
@@ -629,7 +669,9 @@ def _apply_event(verdict: MuseVerdict, event: dict, wall_ms: int) -> None:
         if verdict.first_partial_wall_ms is None:
             verdict.first_partial_wall_ms = wall_ms
         text = event.get("transcript", "")
-        if text:
+        # In ENDPOINTING mode the turns are authoritative; a partial would
+        # overwrite an already-joined multi-turn transcript with one turn.
+        if text and not verdict.turns:
             verdict.transcript = text
         if event.get("final"):
             verdict.complete_wall_ms = wall_ms
@@ -645,16 +687,24 @@ def _apply_event(verdict: MuseVerdict, event: dict, wall_ms: int) -> None:
 
     elif kind == "speechEnd":
         verdict.speech_end_ms = event.get("audioProcessedMs")
+        if verdict.first_speech_end_ms is None:
+            verdict.first_speech_end_ms = event.get("audioProcessedMs")
 
     elif kind == "speechComplete":
-        verdict.transcript = event.get("transcript", verdict.transcript)
         verdict.complete_ms = event.get("audioProcessedMs")
         verdict.complete_wall_ms = wall_ms
         verdict.turns.append({
             "turn_id": event.get("turnId"),
             "transcript": event.get("transcript", ""),
             "audio_processed_ms": event.get("audioProcessedMs"),
+            "wall_ms": wall_ms,
         })
+        # Join rather than overwrite. ENDPOINTING splits an utterance with a
+        # pause in it into several turns, and keeping only the last silently
+        # drops the beginning of what someone said — which reads as a
+        # plausible transcript and is half a sentence.
+        verdict.transcript = " ".join(
+            t["transcript"].strip() for t in verdict.turns if t["transcript"].strip())
 
     elif kind == "speaker":
         verdict.speakers.append({
@@ -693,7 +743,7 @@ def render_report(rows: list[dict], ran_muse: bool, exact_vad: bool) -> str:
 
     header = f"{'clip':<28} {'length':>8} {'HA cuts':>9} {'lost':>8}"
     if ran_muse:
-        header += f" {'Muse end':>9} {'lag':>8}  transcript"
+        header += f" {'Muse end':>9} {'lag':>8} {'turns':>6}  transcript"
     out.append(header)
     out.append("-" * (len(header) + 20))
 
@@ -707,11 +757,12 @@ def render_report(rows: list[dict], ran_muse: bool, exact_vad: bool) -> str:
         if ran_muse:
             muse = row.get("muse") or {}
             if muse.get("error"):
-                line += f" {'ERROR':>9} {'--':>8}  {muse['error'][:110]}"
+                line += f" {'ERROR':>9} {'--':>8} {'--':>6}  {muse['error'][:110]}"
             else:
                 line += (
-                    f" {_fmt_ms(muse.get('speech_end_ms')):>9} "
-                    f"{_fmt_ms(muse.get('endpoint_lag_ms')):>8}  "
+                    f" {_fmt_ms(muse.get('endpoint_ms')):>9} "
+                    f"{_fmt_ms(muse.get('endpoint_lag_ms')):>8} "
+                    f"{muse.get('turn_count', 0):>6}  "
                     f"{muse.get('transcript', '')[:60]}"
                 )
         out.append(line)
@@ -747,18 +798,51 @@ def render_report(rows: list[dict], ran_muse: bool, exact_vad: bool) -> str:
                 "  STT round trip, so lag under ~700ms is a straight win."
             )
 
-        rescued = [
-            r for r in rows
-            if r["ha"]["truncated"]
-            and r.get("muse")
+        # A session that outlives HA's cut is not the same as a model that
+        # kept listening. Muse can endpoint in the same place HA does and
+        # then emit further turns; the text is recoverable, but only by an
+        # integration that decides to wait for and join them, which HA's
+        # one-transcript-per-turn STT interface does not do for you.
+        scored = [
+            r for r in truncated
+            if r.get("muse")
             and not r["muse"].get("error")
-            and (r["muse"].get("speech_end_ms") or 0) > (r["ha"]["cut_ms"] or 0)
+            and r["muse"].get("model_endpointed")
         ]
+        unscored = [
+            r for r in truncated
+            if r.get("muse")
+            and not r["muse"].get("error")
+            and not r["muse"].get("model_endpointed")
+        ]
+        rescued, split = [], []
+        for r in scored:
+            first = r["muse"].get("endpoint_ms") or 0
+            if first > (r["ha"]["cut_ms"] or 0) + ENDPOINT_MARGIN_MS:
+                rescued.append(r)
+            elif r["muse"].get("turn_count", 0) > 1:
+                split.append(r)
+
         out.append("")
         out.append(
-            f"VERDICT: Muse kept listening past HA's cut on {len(rescued)} of "
-            f"{len(truncated)} truncated clips."
-        )
+            f"VERDICT, on {len(scored)} truncated clips Muse also saw:")
+        out.append(
+            f"  kept listening past HA's cut:      {len(rescued)}")
+        out.append(
+            f"  endpointed too, but emitted turns: {len(split)}")
+        if split:
+            out.append(
+                "  The split clips lose nothing only if the integration"
+                " waits for the later turns and joins them. HA's STT"
+                " interface returns one transcript per turn and will"
+                " not do that for you."
+            )
+        if unscored:
+            out.append(
+                f"  not scorable ({len(unscored)}): this mode does not endpoint."
+                " The transcript covers the whole clip because the harness"
+                " stopped sending, not because the model decided anything."
+            )
         if not truncated:
             out.append(
                 "  No clip was truncated, so this run says nothing either way."
@@ -870,8 +954,12 @@ def main(argv: list[str] | None = None) -> int:
                 endpoint=args.endpoint))
             row["muse"] = {
                 "transcript": muse.transcript,
+                "turn_count": muse.turn_count,
+                "model_endpointed": muse.model_endpointed,
+                "endpoint_ms": muse.endpoint_ms,
                 "speech_start_ms": muse.speech_start_ms,
                 "speech_end_ms": muse.speech_end_ms,
+                "first_speech_end_ms": muse.first_speech_end_ms,
                 "complete_ms": muse.complete_ms,
                 "first_partial_wall_ms": muse.first_partial_wall_ms,
                 "complete_wall_ms": muse.complete_wall_ms,

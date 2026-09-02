@@ -160,33 +160,103 @@ never echoed into the report or the JSON. A test asserts the last part.
 
 ### What was and was not verified
 
-Verified: the HA-side analysis end to end on synthetic clips (a hesitation
-clip cut at the silence window, a long clip reaching the ceiling, a fluent
-clip untouched); relaxed VAD sensitivity rescuing the hesitation case while
+Verified without the API: the HA-side analysis end to end (a hesitation clip
+cut at the silence window, a long clip reaching the ceiling, a fluent clip
+untouched); relaxed VAD sensitivity rescuing the hesitation case while
 leaving the ceiling untouched; the WebSocket client driven through a full
-session against a local mock — handshake shape, real-time pacing, complete
-audio delivery, `endStream` half-close, and event folding.
+session against a local mock.
 
-**Not verified: any call to Meta's actual endpoint.** The sandbox this was
-built in intercepts TLS, so the live API was never reached. The protocol is
-implemented from the vendor's published reference and should be treated as
-unconfirmed until a real key runs a real clip.
+Verified against the live endpoint: handshake, bearer token in the JSON
+frame, TLS through the OS trust store, real-time pacing, `endStream`
+half-close, and the documented event schema. The protocol as published is
+correct.
+
+**Still not representative: the audio.** The only speech run through it so
+far was generated with Windows SAPI text-to-speech — clean, close-mic, no
+room noise, and an artificial silence for the pause. Every number below is a
+smoke test, not a measurement of this house.
+
+## First live run, and the result that inverts the premise
+
+The framing this document opened with — *would Muse let someone finish a
+sentence HA cuts off* — did not survive contact with the API.
+
+Given one utterance with a 900ms mid-sentence pause:
+
+- **HA** cuts at 3.33s and loses the entire second clause.
+- **Muse in ENDPOINTING mode endpoints at 3.02s** — *earlier* than HA, in
+  materially the same place — and emits the utterance as **two turns**.
+- **Muse in PUSH_TO_TALK mode transcribes straight through the pause** and
+  returns the whole sentence as one transcript.
+
+So Muse does not "keep listening" through a hesitation. It segments there
+too. What it does differently is keep the session open and deliver the rest
+as a further turn, rather than discarding it.
+
+**And the split is not tunable.** The realtime handshake schema has no
+parameter for endpointing sensitivity, silence tolerance, pause duration, or
+minimum turn length. Turn-splitting behaviour is fixed by the model.
+
+### Why that matters architecturally
+
+Home Assistant's STT entity returns **one transcript per turn**. Both modes
+therefore fail on their own:
+
+| Mode | Behaviour | Why it does not drop in |
+| --- | --- | --- |
+| `ENDPOINTING` | Splits at the pause | HA takes the first transcript; later turns have nowhere to go |
+| `PUSH_TO_TALK` | Never splits | Nothing decides when to stop — that was HA's VAD, which is what we removed |
+
+The path that could still work is a component that declares
+`requires_external_vad=False` — so HA never cuts the stream — runs
+`ENDPOINTING`, and **joins turns itself** under its own, longer silence rule
+before returning. The probe confirms the raw material is there: both halves
+transcribe correctly, with timestamps.
+
+**The cost is latency, and no model removes it.** To tolerate a 1.5s
+hesitation you must wait 1.5s past the last turn before returning, because
+nothing can know whether someone has finished thinking. Muse's endpointing is
+sold as semantic, and here it split before the word "and" — a clear
+continuation — so it does not obviously buy tolerance for free. That may be
+an artefact of synthesised speech, which carries none of the prosody a real
+speaker trailing off would; it is a question for honest audio, not a settled
+negative.
+
+### Three artefacts the harness reported as results
+
+All three were caught by running it, all three are now regression-tested, and
+they share one shape: **a number that looks like a finding and is a property
+of the measuring apparatus.**
+
+1. **Trailing silence scored as truncation.** "HA stopped before the file
+   ended" marks every cleanly-finished sentence as a loss, since recordings
+   end in silence. Now counts only speech after the cut.
+2. **Multi-turn transcripts were overwritten, not joined.** Keeping the last
+   `speechComplete` silently dropped the first half of the utterance and
+   printed a fluent-looking half-sentence. Now joined.
+3. **PUSH_TO_TALK always "beat" HA.** Its endpoint is wherever the harness
+   half-closed, so it outlasted HA's cut by construction. Runs where the
+   model never endpointed are now excluded from scoring and labelled.
 
 ## What a "yes" looks like
 
-Decide on two numbers, not on transcript quality:
+The first number has to be restated in light of the above. Decide on:
 
-1. **Rescued turns** — of the clips HA would truncate, how many does Muse
-   carry to the real end of the sentence. If this is near zero on honest
-   household audio, the feature does not exist and nothing should be built.
-2. **Endpoint lag** — wall-clock delay from the speaker stopping to the text
-   arriving. HA's comparable figure is its 0.7s timer plus the STT round
-   trip, so lag meaningfully under that is a straight win and lag well above
-   it trades one annoyance for another.
+1. **Rescued turns** — clips where Muse's *first* endpoint lands
+   meaningfully later than HA's cut. Measured against synthetic speech this
+   was **zero**; Muse agreed with HA about where the sentence ended.
+2. **Recoverable turns** — clips Muse split but transcribed completely.
+   These are only a win if the component joins them, which is design work,
+   not configuration.
+3. **Endpoint lag** — wall-clock delay from the first endpoint to its text.
+   Roughly 0.58s in ENDPOINTING against HA's 0.7s timer plus round trip, so
+   not a regression on this evidence.
 
-If both land well, the build is one `stt` platform entity declaring
-`requires_external_vad=False`, a config flow, and the key in
-`secrets.yaml` — small, but on an untrodden HA code path.
+**On present evidence the case for building is weak**, and the honest next
+step is to re-run against real household recordings before writing any
+integration. If real speech shows the same agreement between Muse and HA on
+where a turn ends, then the only thing this buys is transcription accuracy,
+which is a much smaller prize than the one this investigation started with.
 
 ## How to audit this
 
